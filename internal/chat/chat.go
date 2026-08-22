@@ -27,6 +27,8 @@ const (
 	KindAlias
 	KindUnalias
 	KindKnown
+	KindAddr
+	KindVersion
 	KindQuit
 	KindUnknown
 )
@@ -88,6 +90,10 @@ func Parse(line string) Command {
 		cmd.Kind = KindUnalias
 	case "/known":
 		cmd.Kind = KindKnown
+	case "/addr", "/addrs":
+		cmd.Kind = KindAddr
+	case "/version":
+		cmd.Kind = KindVersion
 	case "/quit", "/exit":
 		cmd.Kind = KindQuit
 	default:
@@ -114,6 +120,8 @@ Commands:
   /msg <peer-id> <text>      Direct message a connected peer
   /discover [connect]        Show nearby LAN peers; connect joins verified ones
   /whoami                    Show local cryptographic identity
+  /addr                      Show listen, LAN, STUN, and UPnP address candidates
+  /version                   Show program version
   /quit                      Exit
 `)
 }

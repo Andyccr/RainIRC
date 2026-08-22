@@ -69,3 +69,17 @@ func TestHelloSignature(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestUnsignedAddrsDoNotBreakSignature(t *testing.T) {
+	id, _ := identity.Generate()
+	m := NewHello(id.PeerID, id.PublicKeyHex(), "Alice")
+	m.Port = 7777
+	if err := m.Sign(id.PrivateKey); err != nil {
+		t.Fatal(err)
+	}
+	m.Addrs = []string{"10.0.0.5:7777", "192.168.1.8:7777"}
+	m.Port = 9
+	if err := m.VerifySignature(); err != nil {
+		t.Fatal(err)
+	}
+}

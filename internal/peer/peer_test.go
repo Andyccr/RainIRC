@@ -247,6 +247,47 @@ func TestOversizedMessageCloses(t *testing.T) {
 	}
 }
 
+func TestAdvertiseAddrsOnHandshake(t *testing.T) {
+	aID, _ := identity.Generate()
+	bID, _ := identity.Generate()
+	am := testManager(t, aID)
+	bm := testManager(t, bID)
+	bm.SetListenPort(7777)
+	bm.SetAdvertiseAddrs([]string{"10.0.0.5:7777", "not-an-addr", "10.0.0.5:7777"})
+
+	ln := listen(t)
+	errCh := make(chan error, 1)
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			errCh <- err
+			return
+		}
+		_, err = bm.HandshakeAndAdopt(c, bID, "B", true, time.Second)
+		errCh <- err
+	}()
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := am.HandshakeAndAdopt(conn, aID, "A", false, time.Second); err != nil {
+		t.Fatalf("dial handshake: %v", err)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatalf("accept handshake: %v", err)
+	}
+	list := am.List()
+	if len(list) != 1 {
+		t.Fatalf("peers %d", len(list))
+	}
+	if list[0].ListenPort != 7777 {
+		t.Fatalf("listen port %d", list[0].ListenPort)
+	}
+	if len(list[0].Addrs) != 1 || list[0].Addrs[0] != "10.0.0.5:7777" {
+		t.Fatalf("addrs %v", list[0].Addrs)
+	}
+}
+
 func TestTLSTwoPeers(t *testing.T) {
 	aID, _ := identity.Generate()
 	bID, _ := identity.Generate()

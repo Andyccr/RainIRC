@@ -42,16 +42,17 @@ type Message struct {
 	Timestamp int64  `json:"timestamp"`
 	Version   int    `json:"version,omitempty"`
 
-	PeerID    string `json:"peer_id,omitempty"`
-	PublicKey string `json:"public_key,omitempty"`
-	Nickname  string `json:"nickname,omitempty"`
-	Channel   string `json:"channel,omitempty"`
-	Sender    string `json:"sender,omitempty"`
-	Text      string `json:"text,omitempty"`
-	Action    bool   `json:"action,omitempty"`
-	To        string `json:"to,omitempty"`
-	Signature string `json:"signature,omitempty"`
-	Port      int    `json:"port,omitempty"`
+	PeerID    string   `json:"peer_id,omitempty"`
+	PublicKey string   `json:"public_key,omitempty"`
+	Nickname  string   `json:"nickname,omitempty"`
+	Channel   string   `json:"channel,omitempty"`
+	Sender    string   `json:"sender,omitempty"`
+	Text      string   `json:"text,omitempty"`
+	Action    bool     `json:"action,omitempty"`
+	To        string   `json:"to,omitempty"`
+	Signature string   `json:"signature,omitempty"`
+	Port      int      `json:"port,omitempty"`
+	Addrs     []string `json:"addrs,omitempty"`
 }
 
 func Now() int64 { return time.Now().Unix() }

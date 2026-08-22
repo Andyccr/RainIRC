@@ -34,6 +34,10 @@ type Config struct {
 	Plain       bool // disable TLS (insecure)
 	AutoConnect bool // connect to verified LAN discoveries
 	Reconnect   bool // reconnect to last known peer addresses on start
+	STUNServer  string
+	NoSTUN      bool
+	UPnP        bool
+	ShowVersion bool
 
 	MaxMessageSize int
 	PingInterval   time.Duration
@@ -73,6 +77,10 @@ func Parse(args []string) (*Config, error) {
 	fs.BoolVar(&cfg.Plain, "plain", false, "disable TLS (insecure; debug only)")
 	fs.BoolVar(&cfg.AutoConnect, "auto-connect", false, "automatically connect to verified LAN peers")
 	fs.BoolVar(&cfg.Reconnect, "reconnect", false, "reconnect to last known peer addresses on start")
+	fs.StringVar(&cfg.STUNServer, "stun", "stun.l.google.com:19302", "STUN server host:port (UDP Binding; not a TCP hole punch)")
+	fs.BoolVar(&cfg.NoSTUN, "no-stun", false, "do not query STUN")
+	fs.BoolVar(&cfg.UPnP, "upnp", false, "try IGD AddPortMapping for the TCP listen port (opt-in)")
+	fs.BoolVar(&cfg.ShowVersion, "version", false, "print version and exit")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err

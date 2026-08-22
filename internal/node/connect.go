@@ -32,7 +32,7 @@ func (n *Node) observePeer(info peer.Info) {
 	if len(info.PublicKey) > 0 {
 		pub = hex.EncodeToString(info.PublicKey)
 	}
-	n.dir.Observe(info.ID, pub, info.Nickname, reconnectAddr(info))
+	n.dir.Observe(info.ID, pub, info.Nickname, reconnectAddr(info), info.Addrs...)
 	_ = n.dir.Save()
 }
 
@@ -46,32 +46,32 @@ func (n *Node) displayName(peerID, nick string) string {
 	return shortID(peerID)
 }
 
-func (n *Node) resolveConnect(target string) (string, error) {
+func (n *Node) resolveConnectTargets(target string) ([]string, error) {
 	target = strings.TrimSpace(target)
 	if target == "" {
-		return "", fmt.Errorf("usage: /connect <host:port|alias>")
+		return nil, fmt.Errorf("usage: /connect <host:port|alias>")
 	}
 	if _, _, err := net.SplitHostPort(target); err == nil {
-		return target, nil
+		return []string{target}, nil
 	}
 	if ip := net.ParseIP(target); ip != nil {
-		return net.JoinHostPort(target, strconv.Itoa(config.DefaultPort)), nil
+		return []string{net.JoinHostPort(target, strconv.Itoa(config.DefaultPort))}, nil
 	}
 	if n.dir != nil {
-		if addr, err := n.dir.AddrFor(target); err == nil {
-			return addr, nil
+		if addrs, err := n.dir.AddrsFor(target); err == nil && len(addrs) > 0 {
+			return addrs, nil
 		}
 	}
 	for _, a := range n.nearbySnapshot() {
 		if strings.EqualFold(a.Nickname, target) || a.PeerID == target ||
 			(len(target) >= 4 && strings.HasPrefix(a.PeerID, target)) {
-			return a.Addr, nil
+			return []string{a.Addr}, nil
 		}
 		if n.dir != nil && strings.EqualFold(n.dir.Alias(a.PeerID), target) {
-			return a.Addr, nil
+			return []string{a.Addr}, nil
 		}
 	}
-	return "", fmt.Errorf("cannot resolve %q (try host:port, alias, or /discover)", target)
+	return nil, fmt.Errorf("cannot resolve %q (try host:port, alias, or /discover)", target)
 }
 
 func (n *Node) nearbySnapshot() []discovery.Announcement {
@@ -103,7 +103,7 @@ func (n *Node) reconnectKnown() {
 		if rec.PeerID == n.ident.PeerID || n.peers.Connected(rec.PeerID) {
 			continue
 		}
-		if err := n.Connect(rec.LastAddr); err != nil {
+		if err := n.Connect(rec.PeerID); err != nil {
 			n.log.Debugf("reconnect %s: %v", shortID(rec.PeerID), err)
 		}
 	}
@@ -149,7 +149,11 @@ func (n *Node) formatKnown() string {
 		if addr == "" {
 			addr = "-"
 		}
-		fmt.Fprintf(&b, "\n  %s  alias=%s  nick=%s  %s", shortID(rec.PeerID), alias, rec.Nickname, addr)
+		extra := ""
+		if len(rec.ExtraAddrs) > 0 {
+			extra = "  +" + strings.Join(rec.ExtraAddrs, ",")
+		}
+		fmt.Fprintf(&b, "\n  %s  alias=%s  nick=%s  %s%s", shortID(rec.PeerID), alias, rec.Nickname, addr, extra)
 	}
 	return b.String()
 }
