@@ -206,18 +206,40 @@ Same fields as `join` with `"type": "leave"`.
 
 ## Discovery (UDP, optional)
 
-Not part of the TCP/TLS stream. UDP multicast to `239.255.77.77:7776`:
+Not part of the TCP/TLS stream. UDP multicast to `239.255.77.77:7776`.
 
 ```json
 {
   "type": "discovery",
+  "version": 2,
   "peer_id": "7f3a91c2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "public_key": "<64 hex chars>",
   "nickname": "Alice",
-  "port": 7777
+  "port": 7777,
+  "tls": true,
+  "timestamp": 1787390200,
+  "signature": "<128 hex chars>"
 }
 ```
 
-Announcements are unauthenticated hints. A TLS handshake is still required.
+Canonical signed payload (newline-joined, excluding `signature`):
+
+```
+type
+version
+peer_id
+public_key
+nickname
+port
+tls          ("1" or "0")
+timestamp
+```
+
+`peer_id` must equal `SHA-256(public_key)`. Timestamps more than 2 minutes
+in the future or 5 minutes in the past are rejected. Unsigned announcements
+may still be displayed as unverified hints; auto-connect ignores them.
+
+A TLS handshake is still required after discovery.
 
 ## Size limits and robustness
 

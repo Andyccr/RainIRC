@@ -13,6 +13,7 @@ import (
 	"github.com/Andyccr/RainIRC/internal/channel"
 	"github.com/Andyccr/RainIRC/internal/chat"
 	"github.com/Andyccr/RainIRC/internal/config"
+	"github.com/Andyccr/RainIRC/internal/directory"
 	"github.com/Andyccr/RainIRC/internal/discovery"
 	"github.com/Andyccr/RainIRC/internal/identity"
 	"github.com/Andyccr/RainIRC/internal/logger"
@@ -48,6 +49,7 @@ type Node struct {
 	chans  *channel.Manager
 	router *router.Router
 	disc   *discovery.Service
+	dir    *directory.Directory
 
 	ln   net.Listener
 	port int
@@ -98,6 +100,13 @@ func Start(parent context.Context, cfg *config.Config, ident *identity.Identity,
 	n.router = router.New(n.peers, n.onRouted, cfg.SeenTTL, cfg.SeenMax)
 	n.peers.SetHooks(n.onPeerMessage, n.onPeerUp, n.onPeerDown)
 
+	dir, err := directory.Load(cfg.DataDir)
+	if err != nil {
+		log.Warnf("peer directory: %v (starting empty)", err)
+		dir = directory.New(cfg.DataDir)
+	}
+	n.dir = dir
+
 	addr := net.JoinHostPort(n.host, fmt.Sprintf("%d", cfg.Port))
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -111,10 +120,13 @@ func Start(parent context.Context, cfg *config.Config, ident *identity.Identity,
 		n.port = cfg.Port
 	}
 
+	n.peers.SetListenPort(n.port)
+
 	n.chans.Join("#general", n.Nick())
 
 	if !cfg.NoDiscover {
-		n.disc = discovery.New(ident.PeerID, n.Nick(), n.port, log)
+		n.disc = discovery.New(ident, n.Nick(), n.port, n.TLS(), log)
+		n.disc.SetOnPeer(n.tryAutoConnect)
 		if err := n.disc.Start(); err != nil {
 			log.Warnf("LAN discovery unavailable: %v", err)
 			n.disc = nil
@@ -123,6 +135,25 @@ func Start(parent context.Context, cfg *config.Config, ident *identity.Identity,
 
 	go n.acceptLoop()
 	go n.seenLoop()
+	if cfg.Reconnect {
+		go n.reconnectKnown()
+	}
+	if cfg.AutoConnect {
+		go func() {
+			t := time.NewTicker(10 * time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-n.ctx.Done():
+					return
+				case <-t.C:
+					for _, a := range n.nearbySnapshot() {
+						n.tryAutoConnect(a)
+					}
+				}
+			}
+		}()
+	}
 	mode := "tls"
 	if cfg.Plain {
 		mode = "plain"
@@ -191,6 +222,11 @@ func (n *Node) Close() error {
 	if n.disc != nil {
 		n.disc.Close()
 	}
+	if n.dir != nil {
+		if err := n.dir.Save(); err != nil {
+			n.log.Warnf("save peer directory: %v", err)
+		}
+	}
 	if err := n.ident.Save(n.cfg.DataDir); err != nil {
 		n.log.Warnf("save identity: %v", err)
 	}
@@ -222,29 +258,37 @@ func (n *Node) handleInbound(conn net.Conn) {
 }
 
 func (n *Node) Connect(address string) error {
-	address = strings.TrimSpace(address)
-	if address == "" {
-		return fmt.Errorf("usage: /connect <host:port>")
-	}
-	if _, _, err := net.SplitHostPort(address); err != nil {
-		address = net.JoinHostPort(address, fmt.Sprintf("%d", config.DefaultPort))
+	address, err := n.resolveConnect(address)
+	if err != nil {
+		return err
 	}
 	d := net.Dialer{Timeout: n.cfg.DialTimeout}
 	conn, err := d.DialContext(n.ctx, "tcp", address)
 	if err != nil {
 		return fmt.Errorf("dial %s: %w", address, err)
 	}
-	_, err = n.peers.HandshakeAndAdopt(conn, n.ident, n.Nick(), false, n.cfg.HandshakeWait)
+	c, err := n.peers.HandshakeAndAdopt(conn, n.ident, n.Nick(), false, n.cfg.HandshakeWait)
 	if err != nil {
 		if errors.Is(err, peer.ErrDuplicate) {
 			return nil
 		}
 		return err
 	}
+	if c != nil {
+		info := c.Info()
+		info.Inbound = false
+		info.Addr = address
+		n.observePeer(info)
+	}
 	return nil
 }
 
 func (n *Node) Disconnect(id string) error {
+	if n.dir != nil {
+		if rec, err := n.dir.Lookup(id); err == nil {
+			id = rec.PeerID
+		}
+	}
 	return n.peers.Disconnect(id)
 }
 
@@ -298,14 +342,21 @@ func (n *Node) SendDirect(to, text string) error {
 	}
 	c, err := n.peers.Find(to)
 	if err != nil {
-		return err
+		if n.dir != nil {
+			if rec, lerr := n.dir.Lookup(to); lerr == nil {
+				c, err = n.peers.Find(rec.PeerID)
+			}
+		}
+		if err != nil {
+			return err
+		}
 	}
 	msg := n.signed(protocol.NewDirect(n.ident.PeerID, n.Nick(), c.ID(), text))
 	n.router.Seen().Add(msg.ID)
 	if err := c.Send(msg); err != nil {
 		return err
 	}
-	n.emit(Event{Kind: EventChat, Text: chat.FormatChat(msg), Msg: msg})
+	n.emit(Event{Kind: EventChat, Text: chat.FormatChat(msg, n.displayName(n.ident.PeerID, n.Nick())), Msg: msg})
 	return nil
 }
 
@@ -346,7 +397,7 @@ func (n *Node) HandleLine(line string) (quit bool, err error) {
 		return false, nil
 	case chat.KindConnect:
 		if len(cmd.Args) < 1 {
-			return false, fmt.Errorf("usage: /connect <host:port>")
+			return false, fmt.Errorf("usage: /connect <host:port|alias>")
 		}
 		return false, n.Connect(cmd.Args[0])
 	case chat.KindDisconnect:
@@ -367,7 +418,7 @@ func (n *Node) HandleLine(line string) (quit bool, err error) {
 			if p.Inbound {
 				dir = "in"
 			}
-			fmt.Fprintf(&b, "\n  %s  %s  %s  (%s)", p.ShortID(), p.Nickname, p.Addr, dir)
+			fmt.Fprintf(&b, "\n  %s  %s  %s  (%s)", p.ShortID(), n.displayName(p.ID, p.Nickname), p.Addr, dir)
 		}
 		n.System("%s", b.String())
 		return false, nil
@@ -415,6 +466,14 @@ func (n *Node) HandleLine(line string) (quit bool, err error) {
 		}
 		return false, n.SendDirect(cmd.Args[0], cmd.Args[1])
 	case chat.KindDiscover:
+		if len(cmd.Args) >= 1 && strings.EqualFold(cmd.Args[0], "connect") {
+			count, err := n.connectNearbyVerified()
+			if err != nil {
+				return false, err
+			}
+			n.System("connected to %d nearby verified peer(s)", count)
+			return false, nil
+		}
 		list := n.Nearby()
 		if len(list) == 0 {
 			n.System("no nearby peers (LAN multicast %s:%d)", config.MulticastGroup, config.MulticastPort)
@@ -423,12 +482,44 @@ func (n *Node) HandleLine(line string) (quit bool, err error) {
 		var b strings.Builder
 		b.WriteString("Nearby peers:")
 		for _, a := range list {
-			fmt.Fprintf(&b, "\n  %s  %s  %s", shortID(a.PeerID), a.Nickname, a.Addr)
+			mark := "unverified"
+			if a.Verified {
+				mark = "verified"
+			}
+			if n.peers.Connected(a.PeerID) {
+				mark += ", connected"
+			}
+			alias := ""
+			if n.dir != nil && n.dir.Alias(a.PeerID) != "" {
+				alias = "  alias=" + n.dir.Alias(a.PeerID)
+			}
+			tls := ""
+			if a.TLS {
+				tls = " tls"
+			}
+			fmt.Fprintf(&b, "\n  %s  %s%s  %s  (%s%s)", shortID(a.PeerID), a.Nickname, alias, a.Addr, mark, tls)
 		}
 		n.System("%s", b.String())
 		return false, nil
 	case chat.KindWhoami:
 		n.System("%s", n.whoami())
+		return false, nil
+	case chat.KindAlias:
+		if len(cmd.Args) == 0 {
+			n.System("%s", n.formatAliases())
+			return false, nil
+		}
+		if len(cmd.Args) < 2 {
+			return false, fmt.Errorf("usage: /alias <peer-id> <name>")
+		}
+		return false, n.setAlias(cmd.Args[0], cmd.Args[1])
+	case chat.KindUnalias:
+		if len(cmd.Args) < 1 {
+			return false, fmt.Errorf("usage: /unalias <name|peer-id>")
+		}
+		return false, n.clearAlias(cmd.Args[0])
+	case chat.KindKnown:
+		n.System("%s", n.formatKnown())
 		return false, nil
 	case chat.KindQuit:
 		return true, nil
@@ -471,7 +562,7 @@ func (n *Node) onRouted(msg *protocol.Message, fromPeer string) {
 				return
 			}
 		}
-		n.emit(Event{Kind: EventChat, Text: chat.FormatChat(msg), Msg: msg})
+		n.emit(Event{Kind: EventChat, Text: chat.FormatChat(msg, n.displayName(msg.Sender, msg.Nickname)), Msg: msg})
 	case protocol.TypeJoin:
 		ch, err := protocol.NormalizeChannel(msg.Channel)
 		if err != nil {
@@ -480,7 +571,7 @@ func (n *Node) onRouted(msg *protocol.Message, fromPeer string) {
 		n.chans.Note(ch)
 		n.chans.MemberJoin(ch, msg.Sender, msg.Nickname)
 		if n.chans.Joined(ch) && msg.Sender != n.ident.PeerID {
-			n.emit(Event{Kind: EventJoin, Text: fmt.Sprintf("%s joined %s", display(msg), ch), Msg: msg})
+			n.emit(Event{Kind: EventJoin, Text: fmt.Sprintf("%s joined %s", n.displayName(msg.Sender, msg.Nickname), ch), Msg: msg})
 		}
 	case protocol.TypeLeave:
 		ch, err := protocol.NormalizeChannel(msg.Channel)
@@ -489,13 +580,14 @@ func (n *Node) onRouted(msg *protocol.Message, fromPeer string) {
 		}
 		n.chans.MemberLeave(ch, msg.Sender)
 		if n.chans.Joined(ch) && msg.Sender != n.ident.PeerID {
-			n.emit(Event{Kind: EventLeave, Text: fmt.Sprintf("%s left %s", display(msg), ch), Msg: msg})
+			n.emit(Event{Kind: EventLeave, Text: fmt.Sprintf("%s left %s", n.displayName(msg.Sender, msg.Nickname), ch), Msg: msg})
 		}
 	}
 }
 
 func (n *Node) onPeerUp(info peer.Info) {
-	n.System("connected to %s (%s)", info.ShortID(), info.Nickname)
+	n.observePeer(info)
+	n.System("connected to %s (%s)", info.ShortID(), n.displayName(info.ID, info.Nickname))
 	n.emit(Event{Kind: EventPeerUp, Text: info.ShortID(), Peer: info})
 	for _, ch := range n.chans.JoinedNames() {
 		msg := n.signed(protocol.NewJoin(n.ident.PeerID, n.Nick(), ch))
@@ -505,7 +597,7 @@ func (n *Node) onPeerUp(info peer.Info) {
 }
 
 func (n *Node) onPeerDown(info peer.Info) {
-	n.System("disconnected from %s (%s)", info.ShortID(), info.Nickname)
+	n.System("disconnected from %s (%s)", info.ShortID(), n.displayName(info.ID, info.Nickname))
 	n.emit(Event{Kind: EventPeerDown, Text: info.ShortID(), Peer: info})
 }
 
@@ -550,13 +642,6 @@ func (n *Node) whoami() string {
   Data dir:   %s%s`,
 		id.PeerID, id.ShortID(), id.Fingerprint(), n.Nick(), id.PublicKeyHex(),
 		transport, n.ListenAddr(), n.DataDir(), created)
-}
-
-func display(msg *protocol.Message) string {
-	if msg.Nickname != "" {
-		return msg.Nickname
-	}
-	return shortID(msg.Sender)
 }
 
 func shortID(id string) string {

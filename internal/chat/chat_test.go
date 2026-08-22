@@ -15,6 +15,9 @@ func TestParseCommands(t *testing.T) {
 		{"/me waves", KindMe},
 		{"/whoami", KindWhoami},
 		{"/id", KindWhoami},
+		{"/alias", KindAlias},
+		{"/known", KindKnown},
+		{"/discover connect", KindDiscover},
 	}
 	for _, c := range cases {
 		got := Parse(c.in)

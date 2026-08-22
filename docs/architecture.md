@@ -1,6 +1,6 @@
 # P2P-IRC architecture
 
-This document describes version **0.2**: a LAN-first, serverless peer-to-peer
+This document describes version **0.3**: a LAN-first, serverless peer-to-peer
 chat process. There is no central server process in this repository.
 
 ## Peer model
@@ -187,8 +187,16 @@ future Noise wrapper can replace TLS without touching channels or the UI.
 TLS here is **not** WebPKI. Certificates are generated from the same Ed25519
 identity used for Peer IDs. Hostname checks are skipped; identity is the key.
 
-## LAN discovery
+## LAN discovery and aliases
 
-Optional UDP multicast to `239.255.77.77:7776`. Announcements carry peer
-ID, nickname, and TCP port. They are not a trust signal; `/connect` still
-performs the TLS handshake.
+Optional UDP multicast to `239.255.77.77:7776`. Version-2 announcements are
+Ed25519-signed (same identity as TLS). Unsigned packets are kept for display
+as `unverified` and are never used by `--auto-connect`.
+
+`--auto-connect` dials verified neighbors. `--reconnect` dials last-seen
+addresses from `~/.p2pirc/peers.json`. `/alias` stores a **local** label
+for a Peer ID; `/connect laptop` resolves through that directory. Aliases
+never travel on the wire and never replace cryptographic identity.
+
+`hello`/`welcome` may include an unsigned `port` hint so an inbound peer
+can be reconnection-addressed (remote host + advertised listen port).

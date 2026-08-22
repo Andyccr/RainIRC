@@ -29,12 +29,13 @@ var (
 
 // Info is metadata about a remote peer after a successful handshake.
 type Info struct {
-	ID        string
-	PublicKey ed25519.PublicKey
-	Nickname  string
-	Addr      string
-	Inbound   bool
-	Connected time.Time
+	ID         string
+	PublicKey  ed25519.PublicKey
+	Nickname   string
+	Addr       string
+	Inbound    bool
+	Connected  time.Time
+	ListenPort int
 }
 
 func (i Info) ShortID() string {
@@ -172,10 +173,11 @@ type Manager struct {
 	idleAfter time.Duration
 	parent    context.Context
 
-	onMsg  func(*Conn, *protocol.Message)
-	onUp   func(Info)
-	onDown func(Info)
-	tls    bool
+	onMsg      func(*Conn, *protocol.Message)
+	onUp       func(Info)
+	onDown     func(Info)
+	tls        bool
+	listenPort int
 }
 
 func NewManager(parent context.Context, localID string, log *logger.Logger, maxMsg int, pingEvery, idleAfter time.Duration) *Manager {
@@ -210,6 +212,15 @@ func (m *Manager) SetHooks(onMsg func(*Conn, *protocol.Message), onUp, onDown fu
 func (m *Manager) EnableTLS() { m.tls = true }
 
 func (m *Manager) TLS() bool { return m.tls }
+
+func (m *Manager) SetListenPort(p int) { m.listenPort = p }
+
+func (m *Manager) Connected(peerID string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	_, ok := m.conns[peerID]
+	return ok
+}
 
 func (m *Manager) LocalID() string { return m.localID }
 
@@ -295,6 +306,7 @@ func (m *Manager) handshake(c *Conn, ident *identity.Identity, nick string, inbo
 			return Info{}, err
 		}
 		welcome := protocol.NewWelcome(ident.PeerID, ident.PublicKeyHex(), nick)
+		welcome.Port = m.listenPort
 		if err := welcome.Sign(ident.PrivateKey); err != nil {
 			return Info{}, fmt.Errorf("%w: sign welcome: %v", ErrHandshake, err)
 		}
@@ -305,6 +317,7 @@ func (m *Manager) handshake(c *Conn, ident *identity.Identity, nick string, inbo
 	}
 
 	hello := protocol.NewHello(ident.PeerID, ident.PublicKeyHex(), nick)
+	hello.Port = m.listenPort
 	if err := hello.Sign(ident.PrivateKey); err != nil {
 		return Info{}, fmt.Errorf("%w: sign hello: %v", ErrHandshake, err)
 	}
@@ -485,5 +498,5 @@ func identityFromHandshake(msg *protocol.Message) (Info, error) {
 			nick = msg.PeerID
 		}
 	}
-	return Info{ID: msg.PeerID, PublicKey: pub, Nickname: nick}, nil
+	return Info{ID: msg.PeerID, PublicKey: pub, Nickname: nick, ListenPort: msg.Port}, nil
 }
