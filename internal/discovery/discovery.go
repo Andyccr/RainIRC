@@ -171,6 +171,8 @@ func (s *Service) announceLoop() {
 	}
 }
 
+const maxSeen = 256
+
 func (s *Service) readLoop() {
 	buf := make([]byte, 4096)
 	for {
@@ -189,7 +191,8 @@ func (s *Service) readLoop() {
 				return
 			}
 			s.log.Debugf("discovery read: %v", err)
-			return
+			time.Sleep(100 * time.Millisecond)
+			continue
 		}
 		var a Announcement
 		if err := json.Unmarshal(buf[:n], &a); err != nil {
@@ -209,11 +212,35 @@ func (s *Service) readLoop() {
 		a.Seen = time.Now()
 		_, existed := s.seen[a.PeerID]
 		s.seen[a.PeerID] = a
+		s.pruneSeenLocked(time.Now())
 		cb := s.onPeer
 		s.mu.Unlock()
 		if cb != nil && !existed {
-			cb(a)
+			go cb(a)
 		}
+	}
+}
+
+func (s *Service) pruneSeenLocked(now time.Time) {
+	cutoff := now.Add(-45 * time.Second)
+	for id, a := range s.seen {
+		if a.Seen.Before(cutoff) {
+			delete(s.seen, id)
+		}
+	}
+	for len(s.seen) > maxSeen {
+		var oldest string
+		var t time.Time
+		first := true
+		for id, a := range s.seen {
+			if first || a.Seen.Before(t) {
+				oldest, t, first = id, a.Seen, false
+			}
+		}
+		if oldest == "" {
+			break
+		}
+		delete(s.seen, oldest)
 	}
 }
 

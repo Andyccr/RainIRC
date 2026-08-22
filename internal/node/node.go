@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/Andyccr/RainIRC/internal/peer"
 	"github.com/Andyccr/RainIRC/internal/protocol"
 	"github.com/Andyccr/RainIRC/internal/router"
+	"github.com/Andyccr/RainIRC/internal/upnp"
 	"github.com/Andyccr/RainIRC/internal/version"
 )
 
@@ -62,6 +64,10 @@ type Node struct {
 	stunDone  bool
 	upnpExt   string
 	upnpUnmap func()
+	upnpMap   *upnp.Mapping
+
+	handshakeSem chan struct{}
+	started      time.Time
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -89,24 +95,30 @@ func Start(parent context.Context, cfg *config.Config, ident *identity.Identity,
 	}
 	ctx, cancel := context.WithCancel(parent)
 	n := &Node{
-		cfg:    cfg,
-		ident:  ident,
-		log:    log,
-		chans:  channel.NewManager(ident.PeerID, cfg.HistoryLimit),
-		ctx:    ctx,
-		cancel: cancel,
-		host:   cfg.ListenHost,
+		cfg:     cfg,
+		ident:   ident,
+		log:     log,
+		chans:   channel.NewManager(ident.PeerID, cfg.HistoryLimit),
+		ctx:     ctx,
+		cancel:  cancel,
+		host:    cfg.ListenHost,
+		started: time.Now(),
 	}
 	if n.host == "" {
 		n.host = "0.0.0.0"
 	}
+	if cfg.MaxHandshakes > 0 {
+		n.handshakeSem = make(chan struct{}, cfg.MaxHandshakes)
+	}
 
 	n.peers = peer.NewManager(ctx, ident.PeerID, log, cfg.MaxMessageSize, cfg.PingInterval, cfg.IdleTimeout)
+	n.peers.SetMaxPeers(cfg.MaxPeers)
 	if !cfg.Plain {
 		n.peers.EnableTLS()
 	}
 	n.router = router.New(n.peers, n.onRouted, cfg.SeenTTL, cfg.SeenMax)
 	n.peers.SetHooks(n.onPeerMessage, n.onPeerUp, n.onPeerDown)
+	n.peers.SetReplaceHook(n.onPeerReplace)
 
 	dir, err := directory.Load(cfg.DataDir)
 	if err != nil {
@@ -144,6 +156,7 @@ func Start(parent context.Context, cfg *config.Config, ident *identity.Identity,
 
 	go n.acceptLoop()
 	go n.seenLoop()
+	go n.dirSaveLoop()
 	go n.probeNAT()
 	if cfg.Reconnect {
 		go n.reconnectKnown()
@@ -195,6 +208,11 @@ func (n *Node) DialAddr() string {
 func (n *Node) Subscribe() <-chan Event {
 	ch := make(chan Event, 128)
 	n.mu.Lock()
+	if n.closed {
+		n.mu.Unlock()
+		close(ch)
+		return ch
+	}
 	n.events = append(n.events, ch)
 	n.mu.Unlock()
 	return ch
@@ -202,6 +220,10 @@ func (n *Node) Subscribe() <-chan Event {
 
 func (n *Node) emit(ev Event) {
 	n.mu.Lock()
+	if n.closed {
+		n.mu.Unlock()
+		return
+	}
 	subs := append([]chan Event(nil), n.events...)
 	n.mu.Unlock()
 	for _, ch := range subs {
@@ -223,12 +245,18 @@ func (n *Node) Close() error {
 		return nil
 	}
 	n.closed = true
-	n.mu.Unlock()
-	n.cancel()
+	subs := n.events
+	n.events = nil
 	n.addrsMu.Lock()
 	unmap := n.upnpUnmap
 	n.upnpUnmap = nil
+	n.upnpMap = nil
 	n.addrsMu.Unlock()
+	n.mu.Unlock()
+	n.cancel()
+	for _, ch := range subs {
+		close(ch)
+	}
 	if unmap != nil {
 		unmap()
 	}
@@ -260,8 +288,22 @@ func (n *Node) acceptLoop() {
 			n.log.Warnf("accept: %v", err)
 			continue
 		}
-		go n.handleInbound(conn)
+		go n.adoptInbound(conn)
 	}
+}
+
+func (n *Node) adoptInbound(conn net.Conn) {
+	if n.handshakeSem != nil {
+		select {
+		case n.handshakeSem <- struct{}{}:
+			defer func() { <-n.handshakeSem }()
+		default:
+			_ = conn.Close()
+			n.log.Debugf("reject inbound: handshake slots full")
+			return
+		}
+	}
+	n.handleInbound(conn)
 }
 
 func (n *Node) handleInbound(conn net.Conn) {
@@ -332,7 +374,11 @@ func (n *Node) Join(name string) error {
 	fresh := n.chans.Join(ch, n.Nick())
 	n.System("joined %s", ch)
 	if fresh {
-		n.router.Inject(n.signed(protocol.NewJoin(n.ident.PeerID, n.Nick(), ch)))
+		msg, err := n.sign(protocol.NewJoin(n.ident.PeerID, n.Nick(), ch))
+		if err != nil {
+			return err
+		}
+		n.router.Inject(msg)
 	}
 	return nil
 }
@@ -348,7 +394,11 @@ func (n *Node) Leave(name string) error {
 	if err := n.chans.Leave(ch); err != nil {
 		return err
 	}
-	n.router.Inject(n.signed(protocol.NewLeave(n.ident.PeerID, n.Nick(), ch)))
+	msg, err := n.sign(protocol.NewLeave(n.ident.PeerID, n.Nick(), ch))
+	if err != nil {
+		return err
+	}
+	n.router.Inject(msg)
 	n.System("left %s", ch)
 	return nil
 }
@@ -362,7 +412,10 @@ func (n *Node) SendChat(text string, action bool) error {
 	if text == "" && !action {
 		return nil
 	}
-	msg := n.signed(protocol.NewChat(n.ident.PeerID, n.Nick(), ch, text, action))
+	msg, err := n.sign(protocol.NewChat(n.ident.PeerID, n.Nick(), ch, text, action))
+	if err != nil {
+		return err
+	}
 	n.router.Inject(msg)
 	return nil
 }
@@ -383,7 +436,10 @@ func (n *Node) SendDirect(to, text string) error {
 			return err
 		}
 	}
-	msg := n.signed(protocol.NewDirect(n.ident.PeerID, n.Nick(), c.ID(), text))
+	msg, err := n.sign(protocol.NewDirect(n.ident.PeerID, n.Nick(), c.ID(), text))
+	if err != nil {
+		return err
+	}
 	n.router.Seen().Add(msg.ID)
 	if err := c.Send(msg); err != nil {
 		return err
@@ -559,6 +615,9 @@ func (n *Node) HandleLine(line string) (quit bool, err error) {
 	case chat.KindVersion:
 		n.System("%s", version.String())
 		return false, nil
+	case chat.KindStats:
+		n.System("%s", n.formatStats())
+		return false, nil
 	case chat.KindQuit:
 		return true, nil
 	case chat.KindUnknown:
@@ -570,7 +629,9 @@ func (n *Node) HandleLine(line string) (quit bool, err error) {
 func (n *Node) onPeerMessage(c *peer.Conn, msg *protocol.Message) {
 	switch msg.Type {
 	case protocol.TypePing:
-		_ = c.Send(protocol.NewPong(n.ident.PeerID))
+		if c.AllowPong(time.Second) {
+			_ = c.Send(protocol.NewPong(n.ident.PeerID))
+		}
 		return
 	case protocol.TypePong:
 		return
@@ -581,6 +642,10 @@ func (n *Node) onPeerMessage(c *peer.Conn, msg *protocol.Message) {
 	if protocol.IsRoutable(msg.Type) {
 		if err := msg.VerifySignature(); err != nil {
 			n.log.Warnf("drop %s from %s: %v", msg.Type, c.Info().ShortID(), err)
+			return
+		}
+		if err := msg.Fresh(time.Now()); err != nil {
+			n.log.Debugf("drop %s from %s: %v", msg.Type, c.Info().ShortID(), err)
 			return
 		}
 		n.router.Handle(msg, c.ID())
@@ -627,16 +692,46 @@ func (n *Node) onPeerUp(info peer.Info) {
 	n.observePeer(info)
 	n.System("connected to %s (%s)", info.ShortID(), n.displayName(info.ID, info.Nickname))
 	n.emit(Event{Kind: EventPeerUp, Text: info.ShortID(), Peer: info})
+	n.resyncJoins(info.ID)
+}
+
+func (n *Node) onPeerReplace(info peer.Info) {
+	n.observePeer(info)
+	n.resyncJoins(info.ID)
+}
+
+func (n *Node) resyncJoins(peerID string) {
 	for _, ch := range n.chans.JoinedNames() {
-		msg := n.signed(protocol.NewJoin(n.ident.PeerID, n.Nick(), ch))
-		_ = n.peers.SendTo(info.ID, msg)
+		msg, err := n.sign(protocol.NewJoin(n.ident.PeerID, n.Nick(), ch))
+		if err != nil {
+			continue
+		}
+		_ = n.peers.SendTo(peerID, msg)
 		n.router.Seen().Add(msg.ID)
 	}
 }
 
 func (n *Node) onPeerDown(info peer.Info) {
+	n.chans.MemberLeaveAll(info.ID)
 	n.System("disconnected from %s (%s)", info.ShortID(), n.displayName(info.ID, info.Nickname))
 	n.emit(Event{Kind: EventPeerDown, Text: info.ShortID(), Peer: info})
+}
+
+func (n *Node) dirSaveLoop() {
+	t := time.NewTicker(3 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-n.ctx.Done():
+			return
+		case <-t.C:
+			if n.dir != nil {
+				if err := n.dir.Save(); err != nil {
+					n.log.Debugf("save peer directory: %v", err)
+				}
+			}
+		}
+	}
 }
 
 func (n *Node) seenLoop() {
@@ -652,11 +747,14 @@ func (n *Node) seenLoop() {
 	}
 }
 
-func (n *Node) signed(msg *protocol.Message) *protocol.Message {
-	if err := msg.Sign(n.ident.PrivateKey); err != nil {
-		n.log.Warnf("sign: %v", err)
+func (n *Node) sign(msg *protocol.Message) (*protocol.Message, error) {
+	if msg == nil {
+		return nil, fmt.Errorf("nil message")
 	}
-	return msg
+	if err := msg.Sign(n.ident.PrivateKey); err != nil {
+		return nil, err
+	}
+	return msg, nil
 }
 
 func (n *Node) whoami() string {
@@ -683,6 +781,24 @@ func (n *Node) whoami() string {
 %s`,
 		version.String(), id.PeerID, id.ShortID(), id.Fingerprint(), n.Nick(), id.PublicKeyHex(),
 		transport, n.ListenAddr(), n.DataDir(), created, n.formatAddrs())
+}
+
+func (n *Node) formatStats() string {
+	max := "unlimited"
+	if n.cfg != nil && n.cfg.MaxPeers > 0 {
+		max = fmt.Sprintf("%d", n.cfg.MaxPeers)
+	}
+	uptime := time.Since(n.started).Truncate(time.Second)
+	return fmt.Sprintf(`Stats:
+  version:    %s
+  uptime:     %s
+  peers:      %d / %s
+  seen-ids:   %d
+  channels:   %d
+  listen:     %s
+  goroutines: %d`,
+		version.String(), uptime, n.peers.Len(), max, n.router.Seen().Len(),
+		len(n.chans.JoinedNames()), n.ListenAddr(), runtime.NumGoroutine())
 }
 
 func shortID(id string) string {

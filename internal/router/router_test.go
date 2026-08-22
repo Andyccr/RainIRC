@@ -102,3 +102,16 @@ func TestSeenStoreBounded(t *testing.T) {
 		t.Fatalf("len %d exceeds max", s.Len())
 	}
 }
+
+func TestStaleMessageDropped(t *testing.T) {
+	s := &recSender{}
+	r := New(s, func(*protocol.Message, string) {}, time.Hour, 100)
+	msg := protocol.NewChat("aa", "A", "#general", "old", false)
+	msg.Timestamp = time.Now().Add(-time.Hour).Unix()
+	if r.Handle(msg, "peerA") {
+		t.Fatal("stale message should be dropped")
+	}
+	if len(s.sent) != 0 {
+		t.Fatal("stale message should not be flooded")
+	}
+}

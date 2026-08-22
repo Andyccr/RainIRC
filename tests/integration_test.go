@@ -353,7 +353,7 @@ func TestVersionCommand(t *testing.T) {
 	}
 	select {
 	case e := <-ev:
-		if !strings.Contains(e.Text, "0.4.0") {
+		if !strings.Contains(e.Text, "0.4.1") {
 			t.Fatalf("/version: %s", e.Text)
 		}
 	case <-time.After(2 * time.Second):
@@ -401,4 +401,52 @@ func TestSTUNMappedListed(t *testing.T) {
 		}
 	}
 	t.Fatal("STUN mapping never appeared in /addr")
+}
+
+func TestStatsCommand(t *testing.T) {
+	n := startNode(t, "Alice")
+	ev := n.Subscribe()
+	if _, err := n.HandleLine("/stats"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case e := <-ev:
+		if !strings.Contains(e.Text, "peers:") || !strings.Contains(e.Text, "seen-ids:") {
+			t.Fatalf("/stats: %s", e.Text)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for /stats")
+	}
+}
+
+func TestPeerDownClearsChannelMember(t *testing.T) {
+	a := startNode(t, "Alice")
+	b := startNode(t, "Bob")
+	if err := a.Connect(b.DialAddr()); err != nil {
+		t.Fatal(err)
+	}
+	waitPeers(t, a, 1)
+	waitPeers(t, b, 1)
+	bob := b.Ident().PeerID
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if a.Channels().Members("#general")[bob] != "" {
+			break
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	if a.Channels().Members("#general")[bob] == "" {
+		t.Fatal("expected Bob in Alice channel roster after join gossip")
+	}
+	if err := a.Disconnect(b.Ident().ShortID()); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := a.Channels().Members("#general")[bob]; !ok {
+			return
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	t.Fatal("Bob still in channel roster after disconnect")
 }

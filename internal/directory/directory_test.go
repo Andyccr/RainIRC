@@ -1,8 +1,10 @@
 package directory
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -96,5 +98,34 @@ func TestAliasUniqueAndInvalid(t *testing.T) {
 func TestValidAlias(t *testing.T) {
 	if !ValidAlias("Laptop") || ValidAlias("") || ValidAlias("a:b") || ValidAlias("#no") {
 		t.Fatal("ValidAlias mismatch")
+	}
+}
+
+func TestConcurrentSave(t *testing.T) {
+	dir := t.TempDir()
+	d, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			id := fmt.Sprintf("%064x", i)
+			d.Observe(id, "", "n", "127.0.0.1:7777")
+			_ = d.Save()
+		}(i)
+	}
+	wg.Wait()
+	if err := d.Save(); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.List()) == 0 {
+		t.Fatal("expected persisted peers after concurrent saves")
 	}
 }

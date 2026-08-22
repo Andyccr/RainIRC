@@ -19,6 +19,8 @@ const (
 	DefaultHistoryPerCh  = 200
 	DefaultHandshakeWait = 5 * time.Second
 	DefaultDialTimeout   = 10 * time.Second
+	DefaultMaxPeers      = 64
+	DefaultMaxHandshakes = 32
 	MulticastGroup       = "239.255.77.77"
 	MulticastPort        = 7776
 )
@@ -38,8 +40,10 @@ type Config struct {
 	NoSTUN      bool
 	UPnP        bool
 	ShowVersion bool
+	MaxPeers    int
 
 	MaxMessageSize int
+	MaxHandshakes  int
 	PingInterval   time.Duration
 	IdleTimeout    time.Duration
 	SeenTTL        time.Duration
@@ -61,6 +65,8 @@ func Default() *Config {
 		HistoryLimit:   DefaultHistoryPerCh,
 		HandshakeWait:  DefaultHandshakeWait,
 		DialTimeout:    DefaultDialTimeout,
+		MaxPeers:       DefaultMaxPeers,
+		MaxHandshakes:  DefaultMaxHandshakes,
 	}
 }
 
@@ -81,6 +87,7 @@ func Parse(args []string) (*Config, error) {
 	fs.BoolVar(&cfg.NoSTUN, "no-stun", false, "do not query STUN")
 	fs.BoolVar(&cfg.UPnP, "upnp", false, "try IGD AddPortMapping for the TCP listen port (opt-in)")
 	fs.BoolVar(&cfg.ShowVersion, "version", false, "print version and exit")
+	fs.IntVar(&cfg.MaxPeers, "max-peers", DefaultMaxPeers, "maximum live TCP/TLS peer sessions (0 = unlimited)")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err

@@ -32,8 +32,7 @@ func (n *Node) observePeer(info peer.Info) {
 	if len(info.PublicKey) > 0 {
 		pub = hex.EncodeToString(info.PublicKey)
 	}
-	n.dir.Observe(info.ID, pub, info.Nickname, reconnectAddr(info), info.Addrs...)
-	_ = n.dir.Save()
+	n.dir.Observe(info.ID, pub, info.Nickname, reconnectAddr(info))
 }
 
 func (n *Node) displayName(peerID, nick string) string {

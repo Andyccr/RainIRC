@@ -95,6 +95,11 @@ A gossiped message from a peer you have never dialed is still verifiable
 because `public_key` travels with the message. Invalid signatures are dropped
 and **not** forwarded.
 
+Receivers **must** also reject `hello`/`welcome`/`chat`/`join`/`leave` when
+`timestamp` is more than **2 minutes** in the future or **10 minutes** in the
+past (Unix seconds, local clock). This stops replay after the seen-ID cache
+expires. `ping`/`pong` are not signed and are not checked this way.
+
 ## Handshake
 
 The **dialer** speaks first, after TLS.

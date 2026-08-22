@@ -1,8 +1,9 @@
 # P2P-IRC architecture
 
-This document describes version **0.4**: a LAN-first, serverless peer-to-peer
-chat process with optional STUN/UPnP **address hints**. There is no central
-server process in this repository. STUN is not a TCP NAT traversal.
+This document describes version **0.4.1**: a LAN-first, serverless peer-to-peer
+chat process with optional STUN/UPnP **address hints**, bounded mesh degree,
+and a timestamp window on signed frames. There is no central server process
+in this repository. STUN is not a TCP NAT traversal.
 
 ## Peer model
 
@@ -167,15 +168,19 @@ and drops on overflow rather than stalling the network.
 
 | Failure | Behavior |
 |---|---|
-| Malformed JSON line | Log, skip line, keep connection |
+| Malformed JSON line | Skip; disconnect after 5 consecutive |
 | Message larger than 64 KiB | Close that connection |
 | Handshake failure | Close socket, do not register |
 | Idle (no recv for 60s) | Close connection |
 | Write / send-queue full | Close slow peer |
 | Discovery bind failure | Warn and continue without `/discover` |
+| Discovery UDP read error | Log, keep listening |
 | STUN Binding failure | Debug log; `/addr` shows no mapping |
 | UPnP mapping failure | Debug log; continue without a public TCP mapping |
-| Peer disconnect | Unregister, print a system line |
+| Malformed JSON after handshake | Skip line; disconnect after 5 consecutive |
+| Handshake slots / max peers full | Close the new socket |
+| Signed frame outside clock window | Drop, do not forward |
+| Peer disconnect | Unregister, drop channel membership, print a system line |
 | Corrupt `identity.json` | Refuse to start (do not silently mint a new key) |
 
 ## Transport
@@ -209,6 +214,15 @@ They may also include unsigned `addrs` (host:port list). Those are TCP
 candidates collected locally: private IPv4 listen addresses, plus a UPnP
 external mapping when `--upnp` succeeds. They are **not** covered by
 `SignBytes` (same as `port`). Receivers sanitize and cap the list.
+Reconnect persistence uses the TCP session address (and listen `port` on
+inbound), not the unsigned `addrs` list.
+
+When a duplicate TCP session is replaced, the keeper re-sends `join` for
+every locally joined channel so membership does not stall on the old socket.
+
+Live mesh degree defaults to 64 (`--max-peers`). In-flight inbound
+handshakes default to 32. `peers.json` is written on a 3-second debounce
+with a single save lock.
 
 ## Addressing, STUN, and UPnP
 

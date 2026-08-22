@@ -1,7 +1,6 @@
 package router
 
 import (
-	"sync"
 	"time"
 
 	"github.com/Andyccr/RainIRC/internal/protocol"
@@ -17,7 +16,6 @@ type Handler func(msg *protocol.Message, fromPeer string)
 
 // Router implements flood/gossip with a bounded seen-message cache.
 type Router struct {
-	mu      sync.Mutex
 	seen    *SeenStore
 	sender  Sender
 	handler Handler
@@ -40,6 +38,9 @@ func (r *Router) Handle(msg *protocol.Message, fromPeer string) bool {
 		return false
 	}
 	if err := msg.Validate(); err != nil {
+		return false
+	}
+	if err := msg.Fresh(time.Now()); err != nil {
 		return false
 	}
 	if !r.seen.Add(msg.ID) {

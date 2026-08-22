@@ -126,7 +126,10 @@ func (m *Manager) AddHistory(msg *protocol.Message) {
 	}
 	ch.History = append(ch.History, msg)
 	if len(ch.History) > m.histLim {
-		ch.History = ch.History[len(ch.History)-m.histLim:]
+		keep := ch.History[len(ch.History)-m.histLim:]
+		dst := make([]*protocol.Message, len(keep))
+		copy(dst, keep)
+		ch.History = dst
 	}
 }
 
@@ -151,6 +154,14 @@ func (m *Manager) MemberJoin(channel, peerID, nick string) {
 		return
 	}
 	ch.Members[peerID] = nick
+}
+
+func (m *Manager) MemberLeaveAll(peerID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, ch := range m.joined {
+		delete(ch.Members, peerID)
+	}
 }
 
 func (m *Manager) MemberLeave(channel, peerID string) {

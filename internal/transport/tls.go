@@ -16,12 +16,18 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/Andyccr/RainIRC/internal/identity"
 )
 
 const ALPN = "p2pirc/2"
+
+var (
+	certMu   sync.Mutex
+	certByID = map[string]tls.Certificate{}
+)
 
 // Handshake upgrades raw to a mutually authenticated TLS 1.3 connection.
 func Handshake(raw net.Conn, ident *identity.Identity, inbound bool, wait time.Duration) (net.Conn, error) {
@@ -99,6 +105,16 @@ func PeerPublicKey(conn net.Conn) (ed25519.PublicKey, error) {
 }
 
 func certificate(ident *identity.Identity) (tls.Certificate, error) {
+	if ident == nil {
+		return tls.Certificate{}, fmt.Errorf("nil identity")
+	}
+	certMu.Lock()
+	if c, ok := certByID[ident.PeerID]; ok {
+		certMu.Unlock()
+		return c, nil
+	}
+	certMu.Unlock()
+
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
 		return tls.Certificate{}, err
@@ -116,8 +132,12 @@ func certificate(ident *identity.Identity) (tls.Certificate, error) {
 	if err != nil {
 		return tls.Certificate{}, fmt.Errorf("create certificate: %w", err)
 	}
-	return tls.Certificate{
+	cert := tls.Certificate{
 		Certificate: [][]byte{der},
 		PrivateKey:  ident.PrivateKey,
-	}, nil
+	}
+	certMu.Lock()
+	certByID[ident.PeerID] = cert
+	certMu.Unlock()
+	return cert, nil
 }

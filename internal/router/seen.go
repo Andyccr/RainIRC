@@ -6,11 +6,14 @@ import (
 )
 
 // SeenStore is a thread-safe, bounded, TTL cache of message IDs.
+// Insertion order is tracked so eviction is O(k) in the number dropped,
+// not O(n²) in the cache size.
 type SeenStore struct {
 	mu  sync.Mutex
 	ttl time.Duration
 	max int
 	m   map[string]time.Time
+	q   []string
 }
 
 func NewSeenStore(ttl time.Duration, max int) *SeenStore {
@@ -23,7 +26,8 @@ func NewSeenStore(ttl time.Duration, max int) *SeenStore {
 	return &SeenStore{
 		ttl: ttl,
 		max: max,
-		m:   make(map[string]time.Time),
+		m:   make(map[string]time.Time, max),
+		q:   make([]string, 0, max),
 	}
 }
 
@@ -34,17 +38,17 @@ func (s *SeenStore) Add(id string) bool {
 	if _, ok := s.m[id]; ok {
 		return false
 	}
+	now := time.Now()
 	if len(s.m) >= s.max {
-		s.sweepLocked(time.Now())
-		if len(s.m) >= s.max {
-			n := s.max / 10
-			if n < 1 {
-				n = 1
-			}
-			s.dropOldestLocked(n)
+		s.sweepLocked(now)
+		for len(s.m) >= s.max && len(s.q) > 0 {
+			old := s.q[0]
+			s.q = s.q[1:]
+			delete(s.m, old)
 		}
 	}
-	s.m[id] = time.Now()
+	s.m[id] = now
+	s.q = append(s.q, id)
 	return true
 }
 
@@ -69,37 +73,14 @@ func (s *SeenStore) Sweep(now time.Time) {
 
 func (s *SeenStore) sweepLocked(now time.Time) {
 	cutoff := now.Add(-s.ttl)
-	for id, t := range s.m {
-		if t.Before(cutoff) {
+	nq := s.q[:0]
+	for _, id := range s.q {
+		t, ok := s.m[id]
+		if !ok || t.Before(cutoff) {
 			delete(s.m, id)
-		}
-	}
-}
-
-func (s *SeenStore) dropOldestLocked(n int) {
-	// Simple pass: drop the first n entries older than the rest by scanning.
-	type pair struct {
-		id string
-		t  time.Time
-	}
-	oldest := make([]pair, 0, n)
-	for id, t := range s.m {
-		if len(oldest) < n {
-			oldest = append(oldest, pair{id, t})
 			continue
 		}
-		// replace the newest among oldest if this is older
-		idx := 0
-		for i := 1; i < len(oldest); i++ {
-			if oldest[i].t.After(oldest[idx].t) {
-				idx = i
-			}
-		}
-		if t.Before(oldest[idx].t) {
-			oldest[idx] = pair{id, t}
-		}
+		nq = append(nq, id)
 	}
-	for _, p := range oldest {
-		delete(s.m, p.id)
-	}
+	s.q = nq
 }

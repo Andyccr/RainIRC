@@ -65,3 +65,18 @@ func TestMemberJoinLeave(t *testing.T) {
 		t.Fatal("remote still a member")
 	}
 }
+
+func TestMemberLeaveAll(t *testing.T) {
+	m := NewManager("local", 10)
+	m.Join("#general", "Alice")
+	m.Join("#dev", "Alice")
+	m.MemberJoin("#general", "remote", "Bob")
+	m.MemberJoin("#dev", "remote", "Bob")
+	m.MemberLeaveAll("remote")
+	if _, ok := m.Members("#general")["remote"]; ok {
+		t.Fatal("remote still in #general")
+	}
+	if _, ok := m.Members("#dev")["remote"]; ok {
+		t.Fatal("remote still in #dev")
+	}
+}
