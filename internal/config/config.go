@@ -25,13 +25,15 @@ const (
 
 // Config is the runtime configuration for one peer process.
 type Config struct {
-	Port       int
-	Nickname   string
-	DataDir    string
-	Debug      bool
-	ListenHost string
-	NoDiscover bool
-	Plain      bool // disable TLS (insecure)
+	Port        int
+	Nickname    string
+	DataDir     string
+	Debug       bool
+	ListenHost  string
+	NoDiscover  bool
+	Plain       bool // disable TLS (insecure)
+	AutoConnect bool // connect to verified LAN discoveries
+	Reconnect   bool // reconnect to last known peer addresses on start
 
 	MaxMessageSize int
 	PingInterval   time.Duration
@@ -69,6 +71,8 @@ func Parse(args []string) (*Config, error) {
 	fs.BoolVar(&cfg.Debug, "debug", false, "enable debug logging on stderr")
 	fs.BoolVar(&cfg.NoDiscover, "no-discover", false, "disable LAN UDP multicast discovery")
 	fs.BoolVar(&cfg.Plain, "plain", false, "disable TLS (insecure; debug only)")
+	fs.BoolVar(&cfg.AutoConnect, "auto-connect", false, "automatically connect to verified LAN peers")
+	fs.BoolVar(&cfg.Reconnect, "reconnect", false, "reconnect to last known peer addresses on start")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err

@@ -24,6 +24,9 @@ const (
 	KindMsg
 	KindDiscover
 	KindWhoami
+	KindAlias
+	KindUnalias
+	KindKnown
 	KindQuit
 	KindUnknown
 )
@@ -79,6 +82,12 @@ func Parse(line string) Command {
 		cmd.Kind = KindDiscover
 	case "/whoami", "/id":
 		cmd.Kind = KindWhoami
+	case "/alias":
+		cmd.Kind = KindAlias
+	case "/unalias":
+		cmd.Kind = KindUnalias
+	case "/known":
+		cmd.Kind = KindKnown
 	case "/quit", "/exit":
 		cmd.Kind = KindQuit
 	default:
@@ -91,34 +100,39 @@ func HelpText() string {
 	return strings.TrimSpace(`
 Commands:
   /help                      Show this help
-  /connect <host:port>       Connect to a peer
+  /connect <host:port|alias> Connect to a peer or a saved alias
   /disconnect <peer-id>      Disconnect a peer
   /peers                     List connected peers
+  /known                     List known peers and aliases
+  /alias [peer-id] [name]    List or set a local alias
+  /unalias <name|peer-id>    Remove a local alias
   /join <#channel>           Join a channel
   /leave <#channel>          Leave a channel
   /channels                  List channels
   /nick <name>               Set nickname (cosmetic only)
   /me <action>               Send an action to the current channel
   /msg <peer-id> <text>      Direct message a connected peer
-  /discover                  Show nearby LAN peers (UDP multicast)
+  /discover [connect]        Show nearby LAN peers; connect joins verified ones
   /whoami                    Show local cryptographic identity
   /quit                      Exit
 `)
 }
 
-func FormatChat(msg *protocol.Message) string {
-	nick := msg.Nickname
-	if nick == "" {
-		nick = short(msg.Sender)
+func FormatChat(msg *protocol.Message, display string) string {
+	if display == "" {
+		display = msg.Nickname
+	}
+	if display == "" {
+		display = short(msg.Sender)
 	}
 	sid := short(msg.Sender)
 	if msg.Action {
-		return fmt.Sprintf("* %s %s", nick, msg.Text)
+		return fmt.Sprintf("* %s %s", display, msg.Text)
 	}
 	if msg.To != "" {
-		return fmt.Sprintf("[dm %s] %s: %s", sid, nick, msg.Text)
+		return fmt.Sprintf("[dm %s] %s: %s", sid, display, msg.Text)
 	}
-	return fmt.Sprintf("[%s] %s: %s", sid, nick, msg.Text)
+	return fmt.Sprintf("[%s] %s: %s", sid, display, msg.Text)
 }
 
 func FormatTime(ts int64) string {

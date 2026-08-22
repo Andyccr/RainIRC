@@ -51,6 +51,7 @@ type Message struct {
 	Action    bool   `json:"action,omitempty"`
 	To        string `json:"to,omitempty"`
 	Signature string `json:"signature,omitempty"`
+	Port      int    `json:"port,omitempty"`
 }
 
 func Now() int64 { return time.Now().Unix() }

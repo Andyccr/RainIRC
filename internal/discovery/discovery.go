@@ -1,28 +1,42 @@
 package discovery
 
 import (
+	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/Andyccr/RainIRC/internal/config"
+	"github.com/Andyccr/RainIRC/internal/identity"
 	"github.com/Andyccr/RainIRC/internal/logger"
 )
 
 // Announcement is the UDP multicast payload.
 type Announcement struct {
-	Type     string    `json:"type"`
-	PeerID   string    `json:"peer_id"`
-	Nickname string    `json:"nickname"`
-	Port     int       `json:"port"`
+	Type      string `json:"type"`
+	Version   int    `json:"version,omitempty"`
+	PeerID    string `json:"peer_id"`
+	PublicKey string `json:"public_key,omitempty"`
+	Nickname  string `json:"nickname"`
+	Port      int    `json:"port"`
+	TLS       bool   `json:"tls,omitempty"`
+	Timestamp int64  `json:"timestamp,omitempty"`
+	Signature string `json:"signature,omitempty"`
+
 	Addr     string    `json:"-"`
 	Seen     time.Time `json:"-"`
+	Verified bool      `json:"-"`
 }
 
 type Service struct {
 	mu     sync.Mutex
+	ident  *identity.Identity
 	local  Announcement
 	seen   map[string]Announcement
 	log    *logger.Logger
@@ -30,18 +44,29 @@ type Service struct {
 	group  *net.UDPAddr
 	stop   chan struct{}
 	closed bool
+	onPeer func(Announcement)
 }
 
-func New(peerID, nick string, tcpPort int, log *logger.Logger) *Service {
+func New(ident *identity.Identity, nick string, tcpPort int, tls bool, log *logger.Logger) *Service {
 	if log == nil {
 		log = logger.New(nil, false)
 	}
+	peerID := ""
+	pub := ""
+	if ident != nil {
+		peerID = ident.PeerID
+		pub = ident.PublicKeyHex()
+	}
 	return &Service{
+		ident: ident,
 		local: Announcement{
-			Type:     "discovery",
-			PeerID:   peerID,
-			Nickname: nick,
-			Port:     tcpPort,
+			Type:      "discovery",
+			Version:   2,
+			PeerID:    peerID,
+			PublicKey: pub,
+			Nickname:  nick,
+			Port:      tcpPort,
+			TLS:       tls,
 		},
 		seen: make(map[string]Announcement),
 		log:  log,
@@ -52,6 +77,12 @@ func New(peerID, nick string, tcpPort int, log *logger.Logger) *Service {
 func (s *Service) SetNickname(n string) {
 	s.mu.Lock()
 	s.local.Nickname = n
+	s.mu.Unlock()
+}
+
+func (s *Service) SetOnPeer(fn func(Announcement)) {
+	s.mu.Lock()
+	s.onPeer = fn
 	s.mu.Unlock()
 }
 
@@ -94,10 +125,15 @@ func (s *Service) Announce() {
 	conn := s.conn
 	group := s.group
 	payload := s.local
+	ident := s.ident
 	closed := s.closed
 	s.mu.Unlock()
 	if closed || conn == nil || group == nil {
 		return
+	}
+	payload.Timestamp = time.Now().Unix()
+	if ident != nil {
+		_ = payload.Sign(ident.PrivateKey)
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -123,7 +159,7 @@ func (s *Service) Nearby() []Announcement {
 
 func (s *Service) announceLoop() {
 	s.Announce()
-	t := time.NewTicker(15 * time.Second)
+	t := time.NewTicker(8 * time.Second)
 	defer t.Stop()
 	for {
 		select {
@@ -136,7 +172,7 @@ func (s *Service) announceLoop() {
 }
 
 func (s *Service) readLoop() {
-	buf := make([]byte, 2048)
+	buf := make([]byte, 4096)
 	for {
 		s.mu.Lock()
 		conn := s.conn
@@ -159,9 +195,10 @@ func (s *Service) readLoop() {
 		if err := json.Unmarshal(buf[:n], &a); err != nil {
 			continue
 		}
-		if a.Type != "discovery" || a.PeerID == "" || a.Port <= 0 {
+		if a.Type != "discovery" || a.PeerID == "" || a.Port <= 0 || a.Port > 65535 {
 			continue
 		}
+		a.Verified = a.Verify() == nil
 		s.mu.Lock()
 		if a.PeerID == s.local.PeerID {
 			s.mu.Unlock()
@@ -170,7 +207,65 @@ func (s *Service) readLoop() {
 		host := src.IP.String()
 		a.Addr = net.JoinHostPort(host, strconv.Itoa(a.Port))
 		a.Seen = time.Now()
+		_, existed := s.seen[a.PeerID]
 		s.seen[a.PeerID] = a
+		cb := s.onPeer
 		s.mu.Unlock()
+		if cb != nil && !existed {
+			cb(a)
+		}
 	}
+}
+
+func (a *Announcement) signBytes() []byte {
+	tls := "0"
+	if a.TLS {
+		tls = "1"
+	}
+	return []byte(strings.Join([]string{
+		a.Type,
+		strconv.Itoa(a.Version),
+		a.PeerID,
+		a.PublicKey,
+		a.Nickname,
+		strconv.Itoa(a.Port),
+		tls,
+		strconv.FormatInt(a.Timestamp, 10),
+	}, "\n"))
+}
+
+func (a *Announcement) Sign(priv ed25519.PrivateKey) error {
+	if a.PublicKey == "" {
+		a.PublicKey = hex.EncodeToString(priv.Public().(ed25519.PublicKey))
+	}
+	a.Signature = hex.EncodeToString(ed25519.Sign(priv, a.signBytes()))
+	return nil
+}
+
+func (a *Announcement) Verify() error {
+	if a.Signature == "" || a.PublicKey == "" {
+		return fmt.Errorf("unsigned")
+	}
+	pub, err := hex.DecodeString(a.PublicKey)
+	if err != nil || len(pub) != ed25519.PublicKeySize {
+		return fmt.Errorf("bad public_key")
+	}
+	sum := sha256.Sum256(pub)
+	if hex.EncodeToString(sum[:]) != strings.ToLower(a.PeerID) {
+		return fmt.Errorf("peer_id mismatch")
+	}
+	sig, err := hex.DecodeString(a.Signature)
+	if err != nil || len(sig) != ed25519.SignatureSize {
+		return fmt.Errorf("bad signature")
+	}
+	if !ed25519.Verify(ed25519.PublicKey(pub), a.signBytes(), sig) {
+		return fmt.Errorf("invalid signature")
+	}
+	if a.Timestamp > 0 {
+		now := time.Now().Unix()
+		if a.Timestamp > now+120 || a.Timestamp < now-300 {
+			return fmt.Errorf("timestamp out of window")
+		}
+	}
+	return nil
 }

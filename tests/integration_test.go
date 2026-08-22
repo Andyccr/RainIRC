@@ -257,3 +257,70 @@ func TestPlainDisablesTLS(t *testing.T) {
 		t.Fatal("--plain should disable TLS")
 	}
 }
+
+func TestConnectByAlias(t *testing.T) {
+	a := startNode(t, "Alice")
+	b := startNode(t, "Bob")
+	if err := a.Connect(b.DialAddr()); err != nil {
+		t.Fatal(err)
+	}
+	waitPeers(t, a, 1)
+	if _, err := a.HandleLine("/alias " + b.Ident().ShortID() + " laptop"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Disconnect(b.Ident().ShortID()); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for a.PeerCount() > 0 && time.Now().Before(deadline) {
+		time.Sleep(15 * time.Millisecond)
+	}
+	if a.PeerCount() != 0 {
+		t.Fatal("still connected after disconnect")
+	}
+	if err := a.Connect("laptop"); err != nil {
+		t.Fatal(err)
+	}
+	waitPeers(t, a, 1)
+}
+
+func TestReconnectKnown(t *testing.T) {
+	b := startNode(t, "Bob")
+	dir := t.TempDir()
+	cfg := config.Default()
+	cfg.Port = 0
+	cfg.ListenHost = "127.0.0.1"
+	cfg.DataDir = dir
+	cfg.Nickname = "Alice"
+	cfg.NoDiscover = true
+	ident, err := identity.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ident.Nickname = "Alice"
+	a, err := node.Start(context.Background(), cfg, ident, logger.New(io.Discard, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Connect(b.DialAddr()); err != nil {
+		t.Fatal(err)
+	}
+	waitPeers(t, a, 1)
+	waitPeers(t, b, 1)
+	if err := a.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	ident2, err := identity.LoadOrCreate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Reconnect = true
+	a2, err := node.Start(context.Background(), cfg, ident2, logger.New(io.Discard, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = a2.Close() })
+	waitPeers(t, a2, 1)
+	waitPeers(t, b, 1)
+}
