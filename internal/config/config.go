@@ -31,6 +31,7 @@ type Config struct {
 	Debug      bool
 	ListenHost string
 	NoDiscover bool
+	Plain      bool // disable TLS (insecure)
 
 	MaxMessageSize int
 	PingInterval   time.Duration
@@ -67,6 +68,7 @@ func Parse(args []string) (*Config, error) {
 	fs.StringVar(&cfg.DataDir, "data-dir", "", "directory for identity (default: ~/.p2pirc)")
 	fs.BoolVar(&cfg.Debug, "debug", false, "enable debug logging on stderr")
 	fs.BoolVar(&cfg.NoDiscover, "no-discover", false, "disable LAN UDP multicast discovery")
+	fs.BoolVar(&cfg.Plain, "plain", false, "disable TLS (insecure; debug only)")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err

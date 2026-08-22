@@ -15,6 +15,7 @@ import (
 	"github.com/Andyccr/RainIRC/internal/identity"
 	"github.com/Andyccr/RainIRC/internal/logger"
 	"github.com/Andyccr/RainIRC/internal/protocol"
+	"github.com/Andyccr/RainIRC/internal/transport"
 )
 
 var (
@@ -174,6 +175,7 @@ type Manager struct {
 	onMsg  func(*Conn, *protocol.Message)
 	onUp   func(Info)
 	onDown func(Info)
+	tls    bool
 }
 
 func NewManager(parent context.Context, localID string, log *logger.Logger, maxMsg int, pingEvery, idleAfter time.Duration) *Manager {
@@ -202,6 +204,12 @@ func (m *Manager) SetHooks(onMsg func(*Conn, *protocol.Message), onUp, onDown fu
 	m.onUp = onUp
 	m.onDown = onDown
 }
+
+// EnableTLS wraps accepted/dialed sockets with mutually authenticated TLS 1.3
+// before the NDJSON handshake.
+func (m *Manager) EnableTLS() { m.tls = true }
+
+func (m *Manager) TLS() bool { return m.tls }
 
 func (m *Manager) LocalID() string { return m.localID }
 
@@ -232,6 +240,17 @@ func (m *Manager) wrap(nc net.Conn, inbound bool) *Conn {
 // Duplicate-connection rule: keep the TCP session initiated by the
 // lexicographically smaller Peer ID. See docs/architecture.md.
 func (m *Manager) HandshakeAndAdopt(nc net.Conn, ident *identity.Identity, nick string, inbound bool, wait time.Duration) (*Conn, error) {
+	if tc, ok := nc.(*net.TCPConn); ok {
+		_ = tc.SetKeepAlive(true)
+		_ = tc.SetKeepAlivePeriod(30 * time.Second)
+	}
+	if m.tls {
+		secured, err := transport.Handshake(nc, ident, inbound, wait)
+		if err != nil {
+			return nil, fmt.Errorf("%w: tls: %v", ErrHandshake, err)
+		}
+		nc = secured
+	}
 	c := m.wrap(nc, inbound)
 	info, err := m.handshake(c, ident, nick, inbound, wait)
 	if err != nil {
@@ -241,6 +260,13 @@ func (m *Manager) HandshakeAndAdopt(nc net.Conn, ident *identity.Identity, nick 
 	if info.ID == m.localID {
 		c.Close()
 		return nil, ErrSelfConnect
+	}
+	if pub, err := transport.PeerPublicKey(nc); err != nil {
+		c.Close()
+		return nil, fmt.Errorf("%w: %v", ErrHandshake, err)
+	} else if pub != nil && !pub.Equal(info.PublicKey) {
+		c.Close()
+		return nil, fmt.Errorf("%w: TLS certificate does not match hello public key", ErrHandshake)
 	}
 	info.Inbound = inbound
 	info.Connected = time.Now()
@@ -269,6 +295,9 @@ func (m *Manager) handshake(c *Conn, ident *identity.Identity, nick string, inbo
 			return Info{}, err
 		}
 		welcome := protocol.NewWelcome(ident.PeerID, ident.PublicKeyHex(), nick)
+		if err := welcome.Sign(ident.PrivateKey); err != nil {
+			return Info{}, fmt.Errorf("%w: sign welcome: %v", ErrHandshake, err)
+		}
 		if err := protocol.Write(c.nc, welcome); err != nil {
 			return Info{}, fmt.Errorf("%w: write welcome: %v", ErrHandshake, err)
 		}
@@ -276,6 +305,9 @@ func (m *Manager) handshake(c *Conn, ident *identity.Identity, nick string, inbo
 	}
 
 	hello := protocol.NewHello(ident.PeerID, ident.PublicKeyHex(), nick)
+	if err := hello.Sign(ident.PrivateKey); err != nil {
+		return Info{}, fmt.Errorf("%w: sign hello: %v", ErrHandshake, err)
+	}
 	if err := protocol.Write(c.nc, hello); err != nil {
 		return Info{}, fmt.Errorf("%w: write hello: %v", ErrHandshake, err)
 	}
@@ -432,6 +464,9 @@ func (m *Manager) UpdateNick(peerID, nick string) {
 
 func identityFromHandshake(msg *protocol.Message) (Info, error) {
 	if err := msg.Validate(); err != nil {
+		return Info{}, fmt.Errorf("%w: %v", ErrHandshake, err)
+	}
+	if err := msg.VerifySignature(); err != nil {
 		return Info{}, fmt.Errorf("%w: %v", ErrHandshake, err)
 	}
 	raw, err := hex.DecodeString(msg.PublicKey)

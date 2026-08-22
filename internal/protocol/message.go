@@ -1,6 +1,7 @@
 // Package protocol defines the newline-delimited JSON messages used on the wire.
 //
-// Protocol version 1. Transport is plain TCP; encryption is a future concern.
+// Protocol version 2: TLS 1.3 transport (default) plus Ed25519 signatures on
+// hello/welcome/chat/join/leave. `--plain` disables TLS for debugging only.
 package protocol
 
 import (
@@ -15,7 +16,7 @@ import (
 )
 
 const (
-	Version        = 1
+	Version        = 2
 	MaxMessageSize = 64 * 1024
 	MaxTextLen     = 4096
 	MaxNickLen     = 32
@@ -49,6 +50,7 @@ type Message struct {
 	Text      string `json:"text,omitempty"`
 	Action    bool   `json:"action,omitempty"`
 	To        string `json:"to,omitempty"`
+	Signature string `json:"signature,omitempty"`
 }
 
 func Now() int64 { return time.Now().Unix() }
