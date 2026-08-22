@@ -321,3 +321,44 @@ func TestTLSTwoPeers(t *testing.T) {
 		t.Fatalf("tls peer counts A=%d B=%d", am.Len(), bm.Len())
 	}
 }
+
+func TestMalformedFloodDisconnects(t *testing.T) {
+	aID, _ := identity.Generate()
+	bID, _ := identity.Generate()
+	am := testManager(t, aID)
+	bm := testManager(t, bID)
+	down := make(chan struct{}, 1)
+	bm.SetHooks(nil, nil, func(Info) { down <- struct{}{} })
+
+	ln := listen(t)
+	errCh := make(chan error, 1)
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			errCh <- err
+			return
+		}
+		_, err = bm.HandshakeAndAdopt(c, bID, "B", true, time.Second)
+		errCh <- err
+	}()
+	raw, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := am.HandshakeAndAdopt(raw, aID, "A", false, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		if _, err := raw.Write([]byte("{not json}\n")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	select {
+	case <-down:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected disconnect after repeated malformed frames")
+	}
+}

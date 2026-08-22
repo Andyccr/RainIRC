@@ -26,7 +26,7 @@ P2P > 中心服务器
 
 这**不是**完整 IRC RFC 实现。它只是一个小的 Go 程序：IRC 式频道 + 直连 TCP/TLS。
 
-当前版本 **0.4**：TLS 1.3、消息签名、签名局域网发现、**地址候选 / STUN / 可选 UPnP**、本地别名、CI。
+当前版本 **0.4.1**：TLS 1.3、消息签名、签名局域网发现、地址候选 / STUN / 可选 UPnP、本地别名、连接与缓存加固、CI。
 
 ### 为什么要无服务器？
 
@@ -104,6 +104,7 @@ make build
 | `--stun` | `stun.l.google.com:19302` | STUN 服务器（UDP Binding；**不是** TCP 打洞） |
 | `--no-stun` | 关 | 不查询 STUN |
 | `--upnp` | 关 | 尝试 IGD 把 TCP 监听端口映射出去（常失败） |
+| `--max-peers` | `64` | 同时在线的 TCP/TLS 会话上限（`0` = 不限制） |
 | `--version` | — | 打印版本并退出 |
 
 身份存在 `~/.p2pirc/identity.json`（Windows 为 `%USERPROFILE%\.p2pirc\`），重启后复用。已知节点和别名在 `peers.json`。输入 `/whoami` 可查看完整 Peer ID、指纹和公钥。
@@ -163,6 +164,7 @@ make build
 /whoami                    显示本机密码学身份
 /addr                      显示监听、局域网、STUN、UPnP 地址候选
 /version                   显示程序版本
+/stats                     显示连接数、已见 ID 缓存等
 /quit                      退出
 ```
 
@@ -198,7 +200,7 @@ STUN（默认开启）只做 **UDP Binding**：它告诉你 NAT 看到的 UDP �
 
 ### 安全（如实说明）
 
-0.4 提供：
+0.4.1 提供：
 
 1. 链路：**TLS 1.3 双向证书**（证书由本机 Ed25519 身份自签，无 CA）
 2. 消息：可 gossip 的帧带 **Ed25519 签名**，`sender` 必须等于 `SHA-256(公钥)`
@@ -208,8 +210,9 @@ STUN（默认开启）只做 **UDP Binding**：它告诉你 NAT 看到的 UDP �
 6. 局域网发现包可验签（未签名的仍显示为 unverified）
 7. 别名只存在本机，不能冒充 Peer ID
 8. `/addr` 如实区分局域网 TCP、STUN UDP 映射、UPnP TCP 映射
+9. 连接数上限、畸形帧断开、签名时间窗
 
-0.4 **仍然不是**：
+0.4.1 **仍然不是**：
 
 - 面向互联网的匿名聊天（没有 TCP 打洞；STUN 不是打洞）
 - 完美前向保密的 Noise 配置（TLS 1.3 有自己的握手；长期身份密钥也用于 TLS 证书）
@@ -249,7 +252,8 @@ go vet ./...
 | 0.1 | 局域网 TCP gossip 聊天 |
 | 0.2 | TLS 1.3 + 消息签名 + `/whoami` |
 | 0.3 | 签名发现、自动连接、本地别名 |
-| 0.4 | 地址候选、STUN、可选 UPnP、CI（当前） |
+| 0.4 | 地址候选、STUN、可选 UPnP、CI |
+| 0.4.1 | 连接/缓存加固、时间窗、/stats（当前） |
 | 0.5 | 可选中继 / 会合，跨互联网 P2P |
 | 0.6 | 加密持久化历史 |
 | 0.7 | 文件传输 |
@@ -275,7 +279,7 @@ LOCAL-FIRST > CLOUD-FIRST
 
 This is **not** a full IRC RFC implementation. It is a small Go program with an IRC-like channel model over direct TCP/TLS.
 
-Current version **0.4**: TLS 1.3, signed messages, signed LAN discovery, **address candidates / STUN / optional UPnP**, local aliases, and CI.
+Current version **0.4.1**: TLS 1.3, signed messages, signed LAN discovery, address candidates / STUN / optional UPnP, local aliases, connection/cache hardening, and CI.
 
 ### Why serverless?
 
@@ -353,6 +357,7 @@ make build
 | `--stun` | `stun.l.google.com:19302` | STUN server (UDP Binding; **not** a TCP hole punch) |
 | `--no-stun` | off | Do not query STUN |
 | `--upnp` | off | Try IGD mapping of the TCP listen port (often fails) |
+| `--max-peers` | `64` | Cap live TCP/TLS sessions (`0` = unlimited) |
 | `--version` | — | Print version and exit |
 
 Identity is stored in `~/.p2pirc/identity.json` (or `%USERPROFILE%\.p2pirc\` on Windows) and reused across restarts. Known peers and aliases live in `peers.json`. `/whoami` prints the full Peer ID, fingerprint, and public key.
@@ -412,6 +417,7 @@ Type a line of text to send it to the current channel (`#general` by default).
 /whoami                    Show local cryptographic identity
 /addr                      Show listen, LAN, STUN, and UPnP address candidates
 /version                   Show program version
+/stats                     Show peer count, seen-ID cache, and process stats
 /quit                      Exit
 ```
 
@@ -447,7 +453,7 @@ STUN (on by default for the CLI) is a **UDP Binding** query: it reports the NAT-
 
 ### Security (honest)
 
-Version 0.4 provides:
+Version 0.4.1 provides:
 
 1. Link: **mutual TLS 1.3** with self-signed Ed25519 certificates (no CA)
 2. Messages: gossip frames carry an **Ed25519 signature**; `sender` must be `SHA-256(public key)`
@@ -457,6 +463,7 @@ Version 0.4 provides:
 6. LAN discovery packets can be signed (unsigned ones show as unverified)
 7. Aliases are local-only and never replace the Peer ID
 8. `/addr` distinguishes LAN TCP, STUN UDP mappings, and UPnP TCP mappings
+9. Peer/handshake caps, malformed-frame disconnect, signed timestamp window
 
 It does **not** provide:
 
@@ -498,7 +505,8 @@ Tests bind to `127.0.0.1` with ephemeral ports and temporary directories. They d
 | 0.1 | LAN TCP gossip chat |
 | 0.2 | TLS 1.3, message signatures, `/whoami` |
 | 0.3 | Signed discovery, auto-connect, local aliases |
-| 0.4 | Address candidates, STUN, optional UPnP, CI (current) |
+| 0.4 | Address candidates, STUN, optional UPnP, CI |
+| 0.4.1 | Connection/cache hardening, timestamp window, `/stats` (current) |
 | 0.5 | Optional relays / rendezvous for Internet-wide P2P |
 | 0.6 | Encrypted persistent history |
 | 0.7 | File transfer |

@@ -26,6 +26,7 @@ var (
 	ErrUnknownPeer = errors.New("unknown peer")
 	ErrAmbiguousID = errors.New("peer id prefix matches more than one peer")
 	ErrSendQueue   = errors.New("send queue full")
+	ErrTooMany     = errors.New("too many peers")
 )
 
 // Info is metadata about a remote peer after a successful handshake.
@@ -68,6 +69,20 @@ type Conn struct {
 
 	closeOnce  sync.Once
 	notifyOnce sync.Once
+	malformed  int
+	lastPong   atomic.Int64
+}
+
+func (c *Conn) AllowPong(minInterval time.Duration) bool {
+	if minInterval <= 0 {
+		minInterval = time.Second
+	}
+	now := time.Now().UnixNano()
+	last := c.lastPong.Load()
+	if last != 0 && now-last < int64(minInterval) {
+		return false
+	}
+	return c.lastPong.CompareAndSwap(last, now)
 }
 
 func (c *Conn) Info() Info               { return c.info }
@@ -112,12 +127,18 @@ func (c *Conn) readLoop() {
 		msg, err := protocol.Read(c.reader, c.maxMsg)
 		if err != nil {
 			if errors.Is(err, protocol.ErrMalformed) {
+				c.malformed++
 				c.log.Warnf("malformed message from %s: %v", c.info.ShortID(), err)
+				if c.malformed >= 5 {
+					c.log.Warnf("disconnecting %s after repeated malformed frames", c.info.ShortID())
+					return
+				}
 				continue
 			}
 			c.log.Debugf("read from %s: %v", c.info.ShortID(), err)
 			return
 		}
+		c.malformed = 0
 		c.touch()
 		if c.onMsg != nil {
 			c.onMsg(c, msg)
@@ -133,13 +154,16 @@ func (c *Conn) writeLoop() {
 		case <-c.ctx.Done():
 			return
 		case <-ticker.C:
-			_ = c.writeMsg(protocol.NewPing(c.info.ID))
 			last := time.Unix(0, c.lastRecv.Load())
 			if c.idleAfter > 0 && time.Since(last) > c.idleAfter {
 				c.log.Warnf("idle timeout for %s", c.info.ShortID())
 				c.Close()
 				return
 			}
+			if time.Since(last) < c.pingEvery {
+				continue
+			}
+			_ = c.writeMsg(protocol.NewPing(c.info.ID))
 		case msg := <-c.sendCh:
 			if err := c.writeMsg(msg); err != nil {
 				c.log.Debugf("write to %s: %v", c.info.ShortID(), err)
@@ -178,9 +202,11 @@ type Manager struct {
 	onMsg      func(*Conn, *protocol.Message)
 	onUp       func(Info)
 	onDown     func(Info)
+	onReplace  func(Info)
 	tls        bool
 	listenPort int
 	advertise  []string
+	maxPeers   int
 }
 
 func NewManager(parent context.Context, localID string, log *logger.Logger, maxMsg int, pingEvery, idleAfter time.Duration) *Manager {
@@ -209,6 +235,10 @@ func (m *Manager) SetHooks(onMsg func(*Conn, *protocol.Message), onUp, onDown fu
 	m.onUp = onUp
 	m.onDown = onDown
 }
+
+func (m *Manager) SetReplaceHook(fn func(Info)) { m.onReplace = fn }
+
+func (m *Manager) SetMaxPeers(n int) { m.maxPeers = n }
 
 // EnableTLS wraps accepted/dialed sockets with mutually authenticated TLS 1.3
 // before the NDJSON handshake.
@@ -362,7 +392,13 @@ func (m *Manager) adopt(c *Conn) (*Conn, error) {
 	existing, ok := m.conns[c.info.ID]
 	var drop *Conn
 	kept := true
+	replaced := false
 	if !ok {
+		if m.maxPeers > 0 && len(m.conns) >= m.maxPeers {
+			m.mu.Unlock()
+			c.Close()
+			return nil, ErrTooMany
+		}
 		m.conns[c.info.ID] = c
 	} else {
 		wantOutbound := m.localID < c.info.ID
@@ -374,6 +410,7 @@ func (m *Manager) adopt(c *Conn) (*Conn, error) {
 		} else if newOutbound == wantOutbound {
 			drop = existing
 			m.conns[c.info.ID] = c
+			replaced = true
 		} else {
 			drop = c
 			kept = false
@@ -389,8 +426,11 @@ func (m *Manager) adopt(c *Conn) (*Conn, error) {
 		}
 	}
 	c.start()
-	// Replacing one TCP session with another for the same peer is not a new neighbor.
-	if m.onUp != nil && drop == nil {
+	if replaced {
+		if m.onReplace != nil {
+			m.onReplace(c.info)
+		}
+	} else if m.onUp != nil && drop == nil {
 		m.onUp(c.info)
 	}
 	return c, nil
@@ -410,11 +450,15 @@ func (m *Manager) unregister(c *Conn) {
 
 func (m *Manager) Broadcast(msg *protocol.Message, exceptPeerID string) {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
+	conns := make([]*Conn, 0, len(m.conns))
 	for id, c := range m.conns {
 		if id == exceptPeerID {
 			continue
 		}
+		conns = append(conns, c)
+	}
+	m.mu.RUnlock()
+	for _, c := range conns {
 		if err := c.Send(msg); err != nil {
 			m.log.Debugf("broadcast to %s: %v", c.info.ShortID(), err)
 			if errors.Is(err, ErrSendQueue) {
@@ -503,6 +547,9 @@ func identityFromHandshake(msg *protocol.Message) (Info, error) {
 		return Info{}, fmt.Errorf("%w: %v", ErrHandshake, err)
 	}
 	if err := msg.VerifySignature(); err != nil {
+		return Info{}, fmt.Errorf("%w: %v", ErrHandshake, err)
+	}
+	if err := msg.Fresh(time.Now()); err != nil {
 		return Info{}, fmt.Errorf("%w: %v", ErrHandshake, err)
 	}
 	raw, err := hex.DecodeString(msg.PublicKey)

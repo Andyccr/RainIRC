@@ -8,6 +8,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestMessageEncoding(t *testing.T) {
@@ -95,5 +96,20 @@ func TestNormalizeChannel(t *testing.T) {
 	}
 	if _, err := NormalizeChannel("#bad channel"); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestFreshWindow(t *testing.T) {
+	m := NewChat("aa", "A", "#general", "hello", false)
+	if err := m.Fresh(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	m.Timestamp = time.Now().Add(-time.Hour).Unix()
+	if err := m.Fresh(time.Now()); err == nil {
+		t.Fatal("stale timestamp should fail")
+	}
+	m.Timestamp = time.Now().Add(time.Hour).Unix()
+	if err := m.Fresh(time.Now()); err == nil {
+		t.Fatal("future timestamp should fail")
 	}
 }

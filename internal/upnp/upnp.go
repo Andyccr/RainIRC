@@ -48,7 +48,7 @@ func MapTCP(ctx context.Context, localIP string, port int) (*Mapping, func(), er
 		"NewInternalClient":         localIP,
 		"NewEnabled":                "1",
 		"NewPortMappingDescription": "p2pirc",
-		"NewLeaseDuration":          "0",
+		"NewLeaseDuration":          "3600",
 	}); err != nil {
 		return nil, nil, err
 	}
@@ -73,6 +73,22 @@ func MapTCP(ctx context.Context, localIP string, port int) (*Mapping, func(), er
 		})
 	}
 	return m, cleanup, nil
+}
+
+func (m *Mapping) Renew(ctx context.Context) error {
+	if m == nil {
+		return fmt.Errorf("nil mapping")
+	}
+	return soap(ctx, m.control, m.service, "AddPortMapping", map[string]string{
+		"NewRemoteHost":             "",
+		"NewExternalPort":           fmt.Sprintf("%d", m.Port),
+		"NewProtocol":               "TCP",
+		"NewInternalPort":           fmt.Sprintf("%d", m.Port),
+		"NewInternalClient":         m.LocalIP,
+		"NewEnabled":                "1",
+		"NewPortMappingDescription": "p2pirc",
+		"NewLeaseDuration":          "3600",
+	})
 }
 
 func discover(ctx context.Context) (string, error) {

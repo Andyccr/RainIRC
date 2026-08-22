@@ -23,6 +23,8 @@ const (
 	MaxChannelLen  = 32
 	MaxIDLen       = 128
 	MaxPeerIDLen   = 64
+	MaxFutureSkew  = 2 * time.Minute
+	MaxPastSkew    = 10 * time.Minute
 )
 
 const (
@@ -278,6 +280,22 @@ func (m *Message) Validate() error {
 		return nil
 	default:
 		return fmt.Errorf("unknown type %q", m.Type)
+	}
+	return nil
+}
+
+// Fresh rejects signed frames that are too far from the local clock so they
+// cannot be replayed after the seen-ID cache expires.
+func (m *Message) Fresh(now time.Time) error {
+	if m == nil || m.Timestamp == 0 {
+		return fmt.Errorf("missing timestamp")
+	}
+	ts := time.Unix(m.Timestamp, 0)
+	if ts.After(now.Add(MaxFutureSkew)) {
+		return fmt.Errorf("timestamp in the future")
+	}
+	if now.Sub(ts) > MaxPastSkew {
+		return fmt.Errorf("timestamp too old")
 	}
 	return nil
 }

@@ -148,10 +148,43 @@ func (n *Node) tryUPnP() {
 		n.log.Debugf("UPnP: %v", err)
 		return
 	}
+	n.mu.Lock()
+	if n.closed {
+		n.mu.Unlock()
+		unmap()
+		return
+	}
 	n.addrsMu.Lock()
 	n.upnpExt = m.External
 	n.upnpUnmap = unmap
+	n.upnpMap = m
 	n.addrsMu.Unlock()
+	n.mu.Unlock()
 	n.refreshAdvertise()
 	n.System("UPnP mapped TCP %s -> %s:%d", m.External, local, n.port)
+	go n.upnpRenewLoop()
+}
+
+func (n *Node) upnpRenewLoop() {
+	t := time.NewTicker(25 * time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-n.ctx.Done():
+			return
+		case <-t.C:
+			n.addrsMu.Lock()
+			m := n.upnpMap
+			n.addrsMu.Unlock()
+			if m == nil {
+				return
+			}
+			ctx, cancel := context.WithTimeout(n.ctx, 5*time.Second)
+			err := m.Renew(ctx)
+			cancel()
+			if err != nil {
+				n.log.Debugf("UPnP renew: %v", err)
+			}
+		}
+	}
 }

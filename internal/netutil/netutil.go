@@ -20,7 +20,7 @@ func PrivateIPv4() []net.IP {
 			continue
 		}
 		ip := ipn.IP.To4()
-		if ip == nil {
+		if ip == nil || ip.IsLinkLocalUnicast() {
 			continue
 		}
 		out = append(out, ip)

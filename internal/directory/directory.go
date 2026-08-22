@@ -34,9 +34,11 @@ type fileData struct {
 
 // Directory is a thread-safe, file-backed table of known peers.
 type Directory struct {
-	mu   sync.RWMutex
-	path string
-	byID map[string]*Record
+	mu     sync.RWMutex
+	saveMu sync.Mutex
+	path   string
+	byID   map[string]*Record
+	dirty  bool
 }
 
 func Path(dir string) string {
@@ -78,26 +80,52 @@ func (d *Directory) Save() error {
 	if d == nil {
 		return nil
 	}
-	d.mu.RLock()
+	d.saveMu.Lock()
+	defer d.saveMu.Unlock()
+
+	d.mu.Lock()
+	if !d.dirty {
+		d.mu.Unlock()
+		return nil
+	}
 	recs := make([]Record, 0, len(d.byID))
 	for _, rec := range d.byID {
 		recs = append(recs, *rec)
 	}
-	d.mu.RUnlock()
+	d.dirty = false
+	path := d.path
+	d.mu.Unlock()
+
 	sort.Slice(recs, func(i, j int) bool { return recs[i].PeerID < recs[j].PeerID })
 	data, err := json.MarshalIndent(fileData{Peers: recs}, "", "  ")
 	if err != nil {
+		d.markDirty()
 		return err
 	}
 	data = append(data, '\n')
-	if err := os.MkdirAll(filepath.Dir(d.path), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		d.markDirty()
 		return err
 	}
-	tmp := d.path + ".tmp"
+	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		d.markDirty()
 		return err
 	}
-	return os.Rename(tmp, d.path)
+	if err := os.Rename(tmp, path); err != nil {
+		d.markDirty()
+		return err
+	}
+	return nil
+}
+
+func (d *Directory) markDirty() {
+	if d == nil {
+		return
+	}
+	d.mu.Lock()
+	d.dirty = true
+	d.mu.Unlock()
 }
 
 func ValidAlias(s string) bool {
@@ -135,6 +163,7 @@ func (d *Directory) Observe(peerID, pubHex, nick, addr string, extra ...string) 
 		rec.ExtraAddrs = netutil.SanitizeAddrs(append(append([]string{}, rec.ExtraAddrs...), extra...), 8)
 	}
 	rec.LastSeen = time.Now().UTC().Format(time.RFC3339)
+	d.dirty = true
 	d.mu.Unlock()
 }
 
@@ -153,6 +182,7 @@ func (d *Directory) SetAlias(peerID, alias string) error {
 	}
 	rec := d.ensureLocked(peerID)
 	rec.Alias = alias
+	d.dirty = true
 	return nil
 }
 
@@ -170,6 +200,7 @@ func (d *Directory) ClearAlias(key string) error {
 		return fmt.Errorf("no alias set")
 	}
 	rec.Alias = ""
+	d.dirty = true
 	return nil
 }
 

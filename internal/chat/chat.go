@@ -29,6 +29,7 @@ const (
 	KindKnown
 	KindAddr
 	KindVersion
+	KindStats
 	KindQuit
 	KindUnknown
 )
@@ -94,6 +95,8 @@ func Parse(line string) Command {
 		cmd.Kind = KindAddr
 	case "/version":
 		cmd.Kind = KindVersion
+	case "/stats":
+		cmd.Kind = KindStats
 	case "/quit", "/exit":
 		cmd.Kind = KindQuit
 	default:
@@ -122,6 +125,7 @@ Commands:
   /whoami                    Show local cryptographic identity
   /addr                      Show listen, LAN, STUN, and UPnP address candidates
   /version                   Show program version
+  /stats                     Show peers, seen-ID cache, and process stats
   /quit                      Exit
 `)
 }
