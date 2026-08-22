@@ -1,0 +1,15 @@
+# Binaries
+/p2pirc
+/p2pirc.exe
+*.exe
+*.test
+*.out
+
+# Local identity / data (never commit keys)
+.p2pirc/
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
