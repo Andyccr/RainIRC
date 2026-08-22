@@ -12,17 +12,20 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/Andyccr/RainIRC/internal/netutil"
 )
 
 const fileName = "peers.json"
 
 type Record struct {
-	PeerID    string `json:"peer_id"`
-	PublicKey string `json:"public_key,omitempty"`
-	Nickname  string `json:"nickname,omitempty"`
-	Alias     string `json:"alias,omitempty"`
-	LastAddr  string `json:"last_addr,omitempty"`
-	LastSeen  string `json:"last_seen,omitempty"`
+	PeerID     string   `json:"peer_id"`
+	PublicKey  string   `json:"public_key,omitempty"`
+	Nickname   string   `json:"nickname,omitempty"`
+	Alias      string   `json:"alias,omitempty"`
+	LastAddr   string   `json:"last_addr,omitempty"`
+	ExtraAddrs []string `json:"addrs,omitempty"`
+	LastSeen   string   `json:"last_seen,omitempty"`
 }
 
 type fileData struct {
@@ -113,7 +116,7 @@ func ValidAlias(s string) bool {
 	return true
 }
 
-func (d *Directory) Observe(peerID, pubHex, nick, addr string) {
+func (d *Directory) Observe(peerID, pubHex, nick, addr string, extra ...string) {
 	if d == nil || peerID == "" {
 		return
 	}
@@ -127,6 +130,9 @@ func (d *Directory) Observe(peerID, pubHex, nick, addr string) {
 	}
 	if addr != "" {
 		rec.LastAddr = addr
+	}
+	if len(extra) > 0 {
+		rec.ExtraAddrs = netutil.SanitizeAddrs(append(append([]string{}, rec.ExtraAddrs...), extra...), 8)
 	}
 	rec.LastSeen = time.Now().UTC().Format(time.RFC3339)
 	d.mu.Unlock()
@@ -207,14 +213,23 @@ func (d *Directory) Lookup(key string) (*Record, error) {
 }
 
 func (d *Directory) AddrFor(key string) (string, error) {
-	rec, err := d.Lookup(key)
+	addrs, err := d.AddrsFor(key)
 	if err != nil {
 		return "", err
 	}
-	if rec.LastAddr == "" {
-		return "", fmt.Errorf("no saved address for %s", d.DisplayName(rec.PeerID, rec.Nickname))
+	return addrs[0], nil
+}
+
+func (d *Directory) AddrsFor(key string) ([]string, error) {
+	rec, err := d.Lookup(key)
+	if err != nil {
+		return nil, err
 	}
-	return rec.LastAddr, nil
+	out := netutil.SanitizeAddrs(append([]string{rec.LastAddr}, rec.ExtraAddrs...), 8)
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no saved address for %s", d.DisplayName(rec.PeerID, rec.Nickname))
+	}
+	return out, nil
 }
 
 func (d *Directory) List() []Record {
@@ -246,7 +261,7 @@ func (d *Directory) List() []Record {
 func (d *Directory) ReconnectTargets() []Record {
 	var out []Record
 	for _, rec := range d.List() {
-		if rec.LastAddr != "" {
+		if rec.LastAddr != "" || len(rec.ExtraAddrs) > 0 {
 			out = append(out, rec)
 		}
 	}

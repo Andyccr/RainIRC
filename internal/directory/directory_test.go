@@ -42,6 +42,34 @@ func TestAliasPersistence(t *testing.T) {
 	}
 }
 
+func TestExtraAddrs(t *testing.T) {
+	dir := t.TempDir()
+	d, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	d.Observe(id, "", "A", "127.0.0.1:7777", "10.0.0.5:7777", "bad")
+	addrs, err := d.AddrsFor(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(addrs) != 2 || addrs[0] != "127.0.0.1:7777" || addrs[1] != "10.0.0.5:7777" {
+		t.Fatalf("%v", addrs)
+	}
+	if err := d.Save(); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := loaded.AddrsFor(id)
+	if err != nil || len(got) != 2 {
+		t.Fatalf("persisted %v err=%v", got, err)
+	}
+}
+
 func TestAliasUniqueAndInvalid(t *testing.T) {
 	d, _ := Load(t.TempDir())
 	id1 := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

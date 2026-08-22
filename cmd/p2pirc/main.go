@@ -14,6 +14,7 @@ import (
 	"github.com/Andyccr/RainIRC/internal/logger"
 	"github.com/Andyccr/RainIRC/internal/node"
 	"github.com/Andyccr/RainIRC/internal/ui"
+	"github.com/Andyccr/RainIRC/internal/version"
 )
 
 func main() {
@@ -30,6 +31,10 @@ func run(args []string) error {
 	cfg, err := config.Parse(args)
 	if err != nil {
 		return err
+	}
+	if cfg.ShowVersion {
+		fmt.Println(version.String())
+		return nil
 	}
 	log := logger.NewDefault(cfg.Debug)
 	ident, err := identity.LoadOrCreate(cfg.DataDir)

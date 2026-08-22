@@ -5,12 +5,11 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net"
 	"os"
-	"strconv"
 	"sync"
 
 	"github.com/Andyccr/RainIRC/internal/node"
+	"github.com/Andyccr/RainIRC/internal/version"
 )
 
 // Terminal is a simple line-oriented chat UI. Incoming events are printed
@@ -35,9 +34,9 @@ func (t *Terminal) printf(format string, args ...any) {
 func (t *Terminal) Run(ctx context.Context) error {
 	n := t.node
 	id := n.Ident()
-	t.printf("P2PIRC  peer=%s  nick=%s  port=%d  tls=%s\n", id.ShortID(), n.Nick(), n.Port(), tlsLabel(n.TLS()))
+	t.printf("%s  peer=%s  nick=%s  port=%d  tls=%s\n", version.String(), id.ShortID(), n.Nick(), n.Port(), tlsLabel(n.TLS()))
 	t.printf("Listening on %s\n", n.ListenAddr())
-	if hint := lanAddress(n.Port()); hint != "" {
+	if hint := n.LANHint(); hint != "" {
 		t.printf("LAN address: %s   (other peers: /connect %s)\n", hint, hint)
 	}
 	t.printf("Type /help for commands. Chat is sent to the current channel.\n")
@@ -112,23 +111,4 @@ func tlsLabel(on bool) string {
 		return "on"
 	}
 	return "off"
-}
-
-func lanAddress(port int) string {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return ""
-	}
-	for _, a := range addrs {
-		ipn, ok := a.(*net.IPNet)
-		if !ok || ipn.IP.IsLoopback() {
-			continue
-		}
-		ip := ipn.IP.To4()
-		if ip == nil {
-			continue
-		}
-		return net.JoinHostPort(ip.String(), strconv.Itoa(port))
-	}
-	return ""
 }

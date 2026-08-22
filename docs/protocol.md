@@ -66,7 +66,8 @@ Receivers treat `id` as an opaque string.
 
 ### Signatures
 
-Canonical payload (UTF-8), fields joined by `\n`, **excluding** `signature`:
+Canonical payload (UTF-8), fields joined by `\n`, **excluding** `signature`,
+`port`, and `addrs`:
 
 ```
 type
@@ -116,12 +117,19 @@ dialer <--- welcome ------------------ listener
   "peer_id": "7f3a91c2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "public_key": "<64 hex chars, Ed25519 public key>",
   "nickname": "Alice",
+  "port": 7777,
+  "addrs": ["192.168.1.10:7777"],
   "signature": "<128 hex chars>"
 }
 ```
 
 `peer_id` is 64 lowercase hex characters: `SHA-256(raw 32-byte public key)`.
 Do not trust `peer_id` without recomputing it. Do not trust `nickname`.
+
+`port` and `addrs` are unsigned hints. `port` is the sender's TCP listen
+port. `addrs` is a short list of `host:port` TCP candidates (LAN IPv4,
+optional UPnP mapping). Receivers must sanitize them. Extra JSON fields are
+ignored so 0.3 peers can still handshake with a 0.4 peer.
 
 ### `welcome`
 

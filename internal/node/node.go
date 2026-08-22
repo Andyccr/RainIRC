@@ -20,6 +20,7 @@ import (
 	"github.com/Andyccr/RainIRC/internal/peer"
 	"github.com/Andyccr/RainIRC/internal/protocol"
 	"github.com/Andyccr/RainIRC/internal/router"
+	"github.com/Andyccr/RainIRC/internal/version"
 )
 
 type EventKind string
@@ -54,6 +55,13 @@ type Node struct {
 	ln   net.Listener
 	port int
 	host string
+
+	addrsMu   sync.Mutex
+	addrs     []string
+	stunUDP   string
+	stunDone  bool
+	upnpExt   string
+	upnpUnmap func()
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -121,6 +129,7 @@ func Start(parent context.Context, cfg *config.Config, ident *identity.Identity,
 	}
 
 	n.peers.SetListenPort(n.port)
+	n.refreshAdvertise()
 
 	n.chans.Join("#general", n.Nick())
 
@@ -135,6 +144,7 @@ func Start(parent context.Context, cfg *config.Config, ident *identity.Identity,
 
 	go n.acceptLoop()
 	go n.seenLoop()
+	go n.probeNAT()
 	if cfg.Reconnect {
 		go n.reconnectKnown()
 	}
@@ -215,6 +225,13 @@ func (n *Node) Close() error {
 	n.closed = true
 	n.mu.Unlock()
 	n.cancel()
+	n.addrsMu.Lock()
+	unmap := n.upnpUnmap
+	n.upnpUnmap = nil
+	n.addrsMu.Unlock()
+	if unmap != nil {
+		unmap()
+	}
 	if n.ln != nil {
 		_ = n.ln.Close()
 	}
@@ -258,10 +275,25 @@ func (n *Node) handleInbound(conn net.Conn) {
 }
 
 func (n *Node) Connect(address string) error {
-	address, err := n.resolveConnect(address)
+	addrs, err := n.resolveConnectTargets(address)
 	if err != nil {
 		return err
 	}
+	var last error
+	for _, a := range addrs {
+		last = n.dialOne(a)
+		if last == nil {
+			return nil
+		}
+		n.log.Debugf("dial %s: %v", a, last)
+	}
+	if last == nil {
+		return fmt.Errorf("no addresses to try")
+	}
+	return last
+}
+
+func (n *Node) dialOne(address string) error {
 	d := net.Dialer{Timeout: n.cfg.DialTimeout}
 	conn, err := d.DialContext(n.ctx, "tcp", address)
 	if err != nil {
@@ -521,6 +553,12 @@ func (n *Node) HandleLine(line string) (quit bool, err error) {
 	case chat.KindKnown:
 		n.System("%s", n.formatKnown())
 		return false, nil
+	case chat.KindAddr:
+		n.System("%s", n.formatAddrs())
+		return false, nil
+	case chat.KindVersion:
+		n.System("%s", version.String())
+		return false, nil
 	case chat.KindQuit:
 		return true, nil
 	case chat.KindUnknown:
@@ -632,6 +670,7 @@ func (n *Node) whoami() string {
 		created = "\n  Created:    " + id.CreatedAt.UTC().Format(time.RFC3339)
 	}
 	return fmt.Sprintf(`Local identity:
+  Version:    %s
   Peer ID:    %s
   Short ID:   %s
   Fingerprint: %s
@@ -639,9 +678,11 @@ func (n *Node) whoami() string {
   Public key: %s
   Transport:  %s
   Listen:     %s
-  Data dir:   %s%s`,
-		id.PeerID, id.ShortID(), id.Fingerprint(), n.Nick(), id.PublicKeyHex(),
-		transport, n.ListenAddr(), n.DataDir(), created)
+  Data dir:   %s%s
+
+%s`,
+		version.String(), id.PeerID, id.ShortID(), id.Fingerprint(), n.Nick(), id.PublicKeyHex(),
+		transport, n.ListenAddr(), n.DataDir(), created, n.formatAddrs())
 }
 
 func shortID(id string) string {

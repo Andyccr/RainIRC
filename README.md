@@ -26,7 +26,7 @@ P2P > 中心服务器
 
 这**不是**完整 IRC RFC 实现。它只是一个小的 Go 程序：IRC 式频道 + 直连 TCP/TLS。
 
-当前版本 **0.3**：TLS 1.3、消息签名、**签名局域网发现**、**可选自动连接**、**本地别名**。
+当前版本 **0.4**：TLS 1.3、消息签名、签名局域网发现、**地址候选 / STUN / 可选 UPnP**、本地别名、CI。
 
 ### 为什么要无服务器？
 
@@ -80,7 +80,9 @@ P2P-IRC 用 gossip 取代服务器：
 ```bash
 git clone https://github.com/Andyccr/RainIRC.git
 cd RainIRC
-go build -o p2pirc ./cmd/p2pirc
+make build
+# or: go build -o p2pirc ./cmd/p2pirc
+./p2pirc --version
 ```
 
 ### 运行
@@ -99,6 +101,10 @@ go build -o p2pirc ./cmd/p2pirc
 | `--plain` | 关 | **关闭 TLS**（不安全，仅调试） |
 | `--auto-connect` | 关 | 自动连接**已验签**的局域网邻居 |
 | `--reconnect` | 关 | 启动时重连 `peers.json` 里上次的地址 |
+| `--stun` | `stun.l.google.com:19302` | STUN 服务器（UDP Binding；**不是** TCP 打洞） |
+| `--no-stun` | 关 | 不查询 STUN |
+| `--upnp` | 关 | 尝试 IGD 把 TCP 监听端口映射出去（常失败） |
+| `--version` | — | 打印版本并退出 |
 
 身份存在 `~/.p2pirc/identity.json`（Windows 为 `%USERPROFILE%\.p2pirc\`），重启后复用。已知节点和别名在 `peers.json`。输入 `/whoami` 可查看完整 Peer ID、指纹和公钥。
 
@@ -155,6 +161,8 @@ go build -o p2pirc ./cmd/p2pirc
 /msg <peer-id> <text>      给直连节点发私信
 /discover [connect]        显示附近节点；connect 会连上已验签的邻居
 /whoami                    显示本机密码学身份
+/addr                      显示监听、局域网、STUN、UPnP 地址候选
+/version                   显示程序版本
 /quit                      退出
 ```
 
@@ -180,9 +188,17 @@ TCP 上先做 **TLS 1.3**（ALPN `p2pirc/2`），再跑换行分隔 JSON。握�
 
 组播被墙时，手动 `/connect` 仍然可用。未签名的发现包只会显示，不会被 auto-connect。
 
+### 地址、STUN、UPnP
+
+启动后节点会收集本机局域网 IPv4 监听地址，放进握手的未签名 `addrs` 字段。`/addr` 和 `/whoami` 会列出候选。
+
+STUN（默认开启）只做 **UDP Binding**：它告诉你 NAT 看到的 UDP 源地址，**不等于** TCP `7777`，也不能让公网连上你的监听端口。测试请用 `--no-stun` 或空的 `--stun`，`go test` 不会访问公网。
+
+`--upnp` 会尝试在网关上映射 **TCP** 监听端口。很多网络没有 IGD 或禁止 UPnP；失败时节点照常运行。没有端口转发、UPnP 或以后的中继，公网入站仍然失败。完整 UDP 打洞需要会合点（0.5 中继）。
+
 ### 安全（如实说明）
 
-0.3 提供：
+0.4 提供：
 
 1. 链路：**TLS 1.3 双向证书**（证书由本机 Ed25519 身份自签，无 CA）
 2. 消息：可 gossip 的帧带 **Ed25519 签名**，`sender` 必须等于 `SHA-256(公钥)`
@@ -191,10 +207,11 @@ TCP 上先做 **TLS 1.3**（ALPN `p2pirc/2`），再跑换行分隔 JSON。握�
 5. 远程内容不会变成 shell / 代码执行
 6. 局域网发现包可验签（未签名的仍显示为 unverified）
 7. 别名只存在本机，不能冒充 Peer ID
+8. `/addr` 如实区分局域网 TCP、STUN UDP 映射、UPnP TCP 映射
 
-0.3 **仍然不是**：
+0.4 **仍然不是**：
 
-- 面向互联网的匿名聊天（没有 NAT 穿透）
+- 面向互联网的匿名聊天（没有 TCP 打洞；STUN 不是打洞）
 - 完美前向保密的 Noise 配置（TLS 1.3 有自己的握手；长期身份密钥也用于 TLS 证书）
 - 对私钥文件失窃的防护：`identity.json` 仍是 **明文 hex**，权限 `0600`
 - 发现包加密；`/msg` 只发到直连节点
@@ -205,8 +222,8 @@ TCP 上先做 **TLS 1.3**（ALPN `p2pirc/2`），再跑换行分隔 JSON。握�
 
 ### 当前限制
 
-- 面向小型局域网 mesh，不是公网
-- 没有 NAT 穿透 / 中继
+- 面向小型局域网 mesh；公网入站需要转发 / UPnP / 以后的中继
+- STUN 映射的是 UDP，不是 TCP 监听端口
 - 历史只存在内存
 - 已见-ID 缓存有上限（默认 24 小时 / 5 万条）
 - 频道成员是最终一致，没有共识
@@ -216,8 +233,10 @@ TCP 上先做 **TLS 1.3**（ALPN `p2pirc/2`），再跑换行分隔 JSON。握�
 ### 测试
 
 ```bash
+make ci
+# or:
 go test ./...
-gofmt -w .
+gofmt -l .
 go vet ./...
 ```
 
@@ -229,9 +248,9 @@ go vet ./...
 |---|---|
 | 0.1 | 局域网 TCP gossip 聊天 |
 | 0.2 | TLS 1.3 + 消息签名 + `/whoami` |
-| 0.3 | 签名发现、自动连接、本地别名（当前） |
-| 0.4 | NAT 穿透、STUN、UDP 打洞 |
-| 0.5 | 可选中继，跨互联网 P2P |
+| 0.3 | 签名发现、自动连接、本地别名 |
+| 0.4 | 地址候选、STUN、可选 UPnP、CI（当前） |
+| 0.5 | 可选中继 / 会合，跨互联网 P2P |
 | 0.6 | 加密持久化历史 |
 | 0.7 | 文件传输 |
 | 0.8+ | 语音、移动端、稳定协议 |
@@ -256,7 +275,7 @@ LOCAL-FIRST > CLOUD-FIRST
 
 This is **not** a full IRC RFC implementation. It is a small Go program with an IRC-like channel model over direct TCP/TLS.
 
-Current version **0.3**: TLS 1.3, signed messages, **signed LAN discovery**, **optional auto-connect**, and **local peer aliases**.
+Current version **0.4**: TLS 1.3, signed messages, signed LAN discovery, **address candidates / STUN / optional UPnP**, local aliases, and CI.
 
 ### Why serverless?
 
@@ -310,7 +329,9 @@ No Docker, database, Redis, or extra runtime.
 ```bash
 git clone https://github.com/Andyccr/RainIRC.git
 cd RainIRC
-go build -o p2pirc ./cmd/p2pirc
+make build
+# or: go build -o p2pirc ./cmd/p2pirc
+./p2pirc --version
 ```
 
 ### Running
@@ -329,6 +350,10 @@ go build -o p2pirc ./cmd/p2pirc
 | `--plain` | off | **Disable TLS** (insecure; debug only) |
 | `--auto-connect` | off | Automatically connect to **verified** LAN peers |
 | `--reconnect` | off | Reconnect to last-known addresses in `peers.json` on start |
+| `--stun` | `stun.l.google.com:19302` | STUN server (UDP Binding; **not** a TCP hole punch) |
+| `--no-stun` | off | Do not query STUN |
+| `--upnp` | off | Try IGD mapping of the TCP listen port (often fails) |
+| `--version` | — | Print version and exit |
 
 Identity is stored in `~/.p2pirc/identity.json` (or `%USERPROFILE%\.p2pirc\` on Windows) and reused across restarts. Known peers and aliases live in `peers.json`. `/whoami` prints the full Peer ID, fingerprint, and public key.
 
@@ -385,6 +410,8 @@ Type a line of text to send it to the current channel (`#general` by default).
 /msg <peer-id> <text>      Direct message a connected peer
 /discover [connect]        Show nearby LAN peers; connect dials verified ones
 /whoami                    Show local cryptographic identity
+/addr                      Show listen, LAN, STUN, and UPnP address candidates
+/version                   Show program version
 /quit                      Exit
 ```
 
@@ -410,9 +437,17 @@ Only **verified** announcements trigger a TCP/TLS dial. `/discover connect` is t
 
 If multicast is blocked, `/connect` still works. Unsigned discovery packets are shown but never auto-connected.
 
+### Addresses, STUN, and UPnP
+
+After listen, the node collects LAN IPv4 listen addresses and puts them on unsigned hello `addrs`. `/addr` and `/whoami` list candidates.
+
+STUN (on by default for the CLI) is a **UDP Binding** query: it reports the NAT-facing UDP source address. That is **not** TCP port `7777` and does not make the listen port reachable from the Internet. Tests use an empty `--stun` / `--no-stun` so `go test` never needs the public network.
+
+`--upnp` tries to map the **TCP** listen port on an IGD. Many networks have no IGD or block UPnP; failure is ignored. Without a forwarded TCP port, UPnP, or a later relay, inbound from the public Internet still fails. Full UDP hole punching needs a rendezvous (0.5 relays).
+
 ### Security (honest)
 
-Version 0.3 provides:
+Version 0.4 provides:
 
 1. Link: **mutual TLS 1.3** with self-signed Ed25519 certificates (no CA)
 2. Messages: gossip frames carry an **Ed25519 signature**; `sender` must be `SHA-256(public key)`
@@ -421,10 +456,11 @@ Version 0.3 provides:
 5. No remote shell / no code execution from chat
 6. LAN discovery packets can be signed (unsigned ones show as unverified)
 7. Aliases are local-only and never replace the Peer ID
+8. `/addr` distinguishes LAN TCP, STUN UDP mappings, and UPnP TCP mappings
 
 It does **not** provide:
 
-- Internet-wide anonymous chat (no NAT traversal)
+- Internet-wide anonymous chat (no TCP hole punch; STUN is not hole punching)
 - A Noise-protocol identity-hiding handshake
 - Protection if `identity.json` is stolen: the private key is still **plaintext hex**, mode `0600`
 - Internet-wide routing; `/msg` only reaches a directly connected peer
@@ -435,8 +471,8 @@ Anyone who can read `identity.json` can impersonate you. Do not copy it to an un
 
 ### Current limitations
 
-- Designed for a small LAN mesh, not the public Internet
-- NAT traversal is not implemented
+- Designed for a small LAN mesh; inbound Internet needs a forward / UPnP / a later relay
+- STUN maps UDP, not the TCP listen port
 - Message history is in-memory only
 - Duplicate-message cache is bounded (default 24 h / 50k IDs)
 - Channel membership is eventually consistent (no consensus)
@@ -446,8 +482,10 @@ Anyone who can read `identity.json` can impersonate you. Do not copy it to an un
 ### Testing
 
 ```bash
+make ci
+# or:
 go test ./...
-gofmt -w .
+gofmt -l .
 go vet ./...
 ```
 
@@ -459,9 +497,9 @@ Tests bind to `127.0.0.1` with ephemeral ports and temporary directories. They d
 |---|---|
 | 0.1 | LAN TCP gossip chat |
 | 0.2 | TLS 1.3, message signatures, `/whoami` |
-| 0.3 | Signed discovery, auto-connect, local aliases (current) |
-| 0.4 | NAT traversal, STUN, UDP hole punching |
-| 0.5 | Optional relays for Internet-wide P2P |
+| 0.3 | Signed discovery, auto-connect, local aliases |
+| 0.4 | Address candidates, STUN, optional UPnP, CI (current) |
+| 0.5 | Optional relays / rendezvous for Internet-wide P2P |
 | 0.6 | Encrypted persistent history |
 | 0.7 | File transfer |
 | 0.8+ | Voice, mobile, stable protocol |

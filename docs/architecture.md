@@ -1,7 +1,8 @@
 # P2P-IRC architecture
 
-This document describes version **0.3**: a LAN-first, serverless peer-to-peer
-chat process. There is no central server process in this repository.
+This document describes version **0.4**: a LAN-first, serverless peer-to-peer
+chat process with optional STUN/UPnP **address hints**. There is no central
+server process in this repository. STUN is not a TCP NAT traversal.
 
 ## Peer model
 
@@ -154,6 +155,7 @@ Expected goroutines:
 | TCP `acceptLoop` | process |
 | seen-cache sweep | process |
 | discovery read + announce (optional) | process |
+| STUN Binding + optional UPnP (fail-soft) | startup |
 | per-connection read loop | connection |
 | per-connection write loop (includes ping) | connection |
 
@@ -171,6 +173,8 @@ and drops on overflow rather than stalling the network.
 | Idle (no recv for 60s) | Close connection |
 | Write / send-queue full | Close slow peer |
 | Discovery bind failure | Warn and continue without `/discover` |
+| STUN Binding failure | Debug log; `/addr` shows no mapping |
+| UPnP mapping failure | Debug log; continue without a public TCP mapping |
 | Peer disconnect | Unregister, print a system line |
 | Corrupt `identity.json` | Refuse to start (do not silently mint a new key) |
 
@@ -200,3 +204,30 @@ never travel on the wire and never replace cryptographic identity.
 
 `hello`/`welcome` may include an unsigned `port` hint so an inbound peer
 can be reconnection-addressed (remote host + advertised listen port).
+
+They may also include unsigned `addrs` (host:port list). Those are TCP
+candidates collected locally: private IPv4 listen addresses, plus a UPnP
+external mapping when `--upnp` succeeds. They are **not** covered by
+`SignBytes` (same as `port`). Receivers sanitize and cap the list.
+
+## Addressing, STUN, and UPnP
+
+On listen, the node records:
+
+1. Loopback `127.0.0.1:<port>` (local only; not advertised)
+2. Non-loopback IPv4 `host:port` on up interfaces (advertised)
+3. Optional STUN XOR-MAPPED-ADDRESS from `--stun` (default
+   `stun.l.google.com:19302`, disable with `--no-stun` or empty `--stun`)
+4. Optional UPnP `AddPortMapping` when `--upnp` is set
+
+STUN here is a UDP Binding client. The mapped port is the UDP source port of
+that request, **not** the TCP listen port. Advertising it as a TCP dial
+target would be a lie, so it is shown by `/addr` / `/whoami` and is **not**
+placed on hello `addrs`.
+
+UPnP, when it works, maps the TCP listen port through the IGD. That address
+**is** advertised. Many networks have no IGD or block UPnP; failure must not
+stop the node.
+
+`/connect alias` tries `last_addr` then saved extra `addrs` from
+`peers.json`. Full UDP hole punching still needs a rendezvous (roadmap 0.5).

@@ -11,6 +11,7 @@ import (
 	"github.com/Andyccr/RainIRC/internal/identity"
 	"github.com/Andyccr/RainIRC/internal/logger"
 	"github.com/Andyccr/RainIRC/internal/node"
+	"github.com/Andyccr/RainIRC/internal/stun"
 )
 
 func startNode(t *testing.T, nick string) *node.Node {
@@ -323,4 +324,81 @@ func TestReconnectKnown(t *testing.T) {
 	t.Cleanup(func() { _ = a2.Close() })
 	waitPeers(t, a2, 1)
 	waitPeers(t, b, 1)
+}
+
+func TestAddrCommandListsLoopback(t *testing.T) {
+	n := startNode(t, "Alice")
+	ev := n.Subscribe()
+	if _, err := n.HandleLine("/addr"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case e := <-ev:
+		if !strings.Contains(e.Text, "127.0.0.1") {
+			t.Fatalf("/addr missing loopback: %s", e.Text)
+		}
+		if !strings.Contains(e.Text, "STUN") {
+			t.Fatalf("/addr missing STUN section: %s", e.Text)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for /addr")
+	}
+}
+
+func TestVersionCommand(t *testing.T) {
+	n := startNode(t, "Alice")
+	ev := n.Subscribe()
+	if _, err := n.HandleLine("/version"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case e := <-ev:
+		if !strings.Contains(e.Text, "0.4.0") {
+			t.Fatalf("/version: %s", e.Text)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for /version")
+	}
+}
+
+func TestSTUNMappedListed(t *testing.T) {
+	addr, stop, err := stun.ServeBinding("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(stop)
+
+	cfg := config.Default()
+	cfg.Port = 0
+	cfg.ListenHost = "127.0.0.1"
+	cfg.DataDir = t.TempDir()
+	cfg.Nickname = "S"
+	cfg.NoDiscover = true
+	cfg.STUNServer = addr.String()
+	ident, err := identity.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ident.Nickname = "S"
+	n, err := node.Start(context.Background(), cfg, ident, logger.New(io.Discard, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = n.Close() })
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		ev := n.Subscribe()
+		if _, err := n.HandleLine("/addr"); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case e := <-ev:
+			if strings.Contains(e.Text, "This is a UDP Binding mapping") && strings.Contains(e.Text, "127.0.0.1") {
+				return
+			}
+		case <-time.After(80 * time.Millisecond):
+		}
+	}
+	t.Fatal("STUN mapping never appeared in /addr")
 }

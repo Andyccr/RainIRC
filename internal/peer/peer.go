@@ -14,6 +14,7 @@ import (
 
 	"github.com/Andyccr/RainIRC/internal/identity"
 	"github.com/Andyccr/RainIRC/internal/logger"
+	"github.com/Andyccr/RainIRC/internal/netutil"
 	"github.com/Andyccr/RainIRC/internal/protocol"
 	"github.com/Andyccr/RainIRC/internal/transport"
 )
@@ -36,6 +37,7 @@ type Info struct {
 	Inbound    bool
 	Connected  time.Time
 	ListenPort int
+	Addrs      []string
 }
 
 func (i Info) ShortID() string {
@@ -178,6 +180,7 @@ type Manager struct {
 	onDown     func(Info)
 	tls        bool
 	listenPort int
+	advertise  []string
 }
 
 func NewManager(parent context.Context, localID string, log *logger.Logger, maxMsg int, pingEvery, idleAfter time.Duration) *Manager {
@@ -214,6 +217,24 @@ func (m *Manager) EnableTLS() { m.tls = true }
 func (m *Manager) TLS() bool { return m.tls }
 
 func (m *Manager) SetListenPort(p int) { m.listenPort = p }
+
+// SetAdvertiseAddrs stores unsigned TCP address hints for hello/welcome.
+func (m *Manager) SetAdvertiseAddrs(addrs []string) {
+	m.mu.Lock()
+	m.advertise = netutil.SanitizeAddrs(addrs, 8)
+	m.mu.Unlock()
+}
+
+func (m *Manager) advertiseSnapshot() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if len(m.advertise) == 0 {
+		return nil
+	}
+	out := make([]string, len(m.advertise))
+	copy(out, m.advertise)
+	return out
+}
 
 func (m *Manager) Connected(peerID string) bool {
 	m.mu.RLock()
@@ -307,6 +328,7 @@ func (m *Manager) handshake(c *Conn, ident *identity.Identity, nick string, inbo
 		}
 		welcome := protocol.NewWelcome(ident.PeerID, ident.PublicKeyHex(), nick)
 		welcome.Port = m.listenPort
+		welcome.Addrs = m.advertiseSnapshot()
 		if err := welcome.Sign(ident.PrivateKey); err != nil {
 			return Info{}, fmt.Errorf("%w: sign welcome: %v", ErrHandshake, err)
 		}
@@ -318,6 +340,7 @@ func (m *Manager) handshake(c *Conn, ident *identity.Identity, nick string, inbo
 
 	hello := protocol.NewHello(ident.PeerID, ident.PublicKeyHex(), nick)
 	hello.Port = m.listenPort
+	hello.Addrs = m.advertiseSnapshot()
 	if err := hello.Sign(ident.PrivateKey); err != nil {
 		return Info{}, fmt.Errorf("%w: sign hello: %v", ErrHandshake, err)
 	}
@@ -498,5 +521,11 @@ func identityFromHandshake(msg *protocol.Message) (Info, error) {
 			nick = msg.PeerID
 		}
 	}
-	return Info{ID: msg.PeerID, PublicKey: pub, Nickname: nick, ListenPort: msg.Port}, nil
+	return Info{
+		ID:         msg.PeerID,
+		PublicKey:  pub,
+		Nickname:   nick,
+		ListenPort: msg.Port,
+		Addrs:      netutil.SanitizeAddrs(msg.Addrs, 8),
+	}, nil
 }
