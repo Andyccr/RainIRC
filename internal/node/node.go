@@ -92,6 +92,9 @@ func Start(parent context.Context, cfg *config.Config, ident *identity.Identity,
 	}
 
 	n.peers = peer.NewManager(ctx, ident.PeerID, log, cfg.MaxMessageSize, cfg.PingInterval, cfg.IdleTimeout)
+	if !cfg.Plain {
+		n.peers.EnableTLS()
+	}
 	n.router = router.New(n.peers, n.onRouted, cfg.SeenTTL, cfg.SeenMax)
 	n.peers.SetHooks(n.onPeerMessage, n.onPeerUp, n.onPeerDown)
 
@@ -120,7 +123,11 @@ func Start(parent context.Context, cfg *config.Config, ident *identity.Identity,
 
 	go n.acceptLoop()
 	go n.seenLoop()
-	n.log.Infof("listening on %s peer=%s", n.ListenAddr(), ident.ShortID())
+	mode := "tls"
+	if cfg.Plain {
+		mode = "plain"
+	}
+	n.log.Infof("listening on %s peer=%s transport=%s", n.ListenAddr(), ident.ShortID(), mode)
 	return n, nil
 }
 
@@ -130,6 +137,8 @@ func (n *Node) Port() int                  { return n.port }
 func (n *Node) PeerCount() int             { return n.peers.Len() }
 func (n *Node) Channels() *channel.Manager { return n.chans }
 func (n *Node) Peers() []peer.Info         { return n.peers.List() }
+func (n *Node) TLS() bool                  { return n.peers.TLS() }
+func (n *Node) DataDir() string            { return n.cfg.DataDir }
 func (n *Node) ListenAddr() string {
 	return net.JoinHostPort(n.host, fmt.Sprintf("%d", n.port))
 }
@@ -247,7 +256,7 @@ func (n *Node) Join(name string) error {
 	fresh := n.chans.Join(ch, n.Nick())
 	n.System("joined %s", ch)
 	if fresh {
-		n.router.Inject(protocol.NewJoin(n.ident.PeerID, n.Nick(), ch))
+		n.router.Inject(n.signed(protocol.NewJoin(n.ident.PeerID, n.Nick(), ch)))
 	}
 	return nil
 }
@@ -263,7 +272,7 @@ func (n *Node) Leave(name string) error {
 	if err := n.chans.Leave(ch); err != nil {
 		return err
 	}
-	n.router.Inject(protocol.NewLeave(n.ident.PeerID, n.Nick(), ch))
+	n.router.Inject(n.signed(protocol.NewLeave(n.ident.PeerID, n.Nick(), ch)))
 	n.System("left %s", ch)
 	return nil
 }
@@ -277,7 +286,7 @@ func (n *Node) SendChat(text string, action bool) error {
 	if text == "" && !action {
 		return nil
 	}
-	msg := protocol.NewChat(n.ident.PeerID, n.Nick(), ch, text, action)
+	msg := n.signed(protocol.NewChat(n.ident.PeerID, n.Nick(), ch, text, action))
 	n.router.Inject(msg)
 	return nil
 }
@@ -291,7 +300,7 @@ func (n *Node) SendDirect(to, text string) error {
 	if err != nil {
 		return err
 	}
-	msg := protocol.NewDirect(n.ident.PeerID, n.Nick(), c.ID(), text)
+	msg := n.signed(protocol.NewDirect(n.ident.PeerID, n.Nick(), c.ID(), text))
 	n.router.Seen().Add(msg.ID)
 	if err := c.Send(msg); err != nil {
 		return err
@@ -418,6 +427,9 @@ func (n *Node) HandleLine(line string) (quit bool, err error) {
 		}
 		n.System("%s", b.String())
 		return false, nil
+	case chat.KindWhoami:
+		n.System("%s", n.whoami())
+		return false, nil
 	case chat.KindQuit:
 		return true, nil
 	case chat.KindUnknown:
@@ -438,6 +450,10 @@ func (n *Node) onPeerMessage(c *peer.Conn, msg *protocol.Message) {
 		return
 	}
 	if protocol.IsRoutable(msg.Type) {
+		if err := msg.VerifySignature(); err != nil {
+			n.log.Warnf("drop %s from %s: %v", msg.Type, c.Info().ShortID(), err)
+			return
+		}
 		n.router.Handle(msg, c.ID())
 	}
 }
@@ -482,7 +498,7 @@ func (n *Node) onPeerUp(info peer.Info) {
 	n.System("connected to %s (%s)", info.ShortID(), info.Nickname)
 	n.emit(Event{Kind: EventPeerUp, Text: info.ShortID(), Peer: info})
 	for _, ch := range n.chans.JoinedNames() {
-		msg := protocol.NewJoin(n.ident.PeerID, n.Nick(), ch)
+		msg := n.signed(protocol.NewJoin(n.ident.PeerID, n.Nick(), ch))
 		_ = n.peers.SendTo(info.ID, msg)
 		n.router.Seen().Add(msg.ID)
 	}
@@ -504,6 +520,36 @@ func (n *Node) seenLoop() {
 			n.router.Sweep(time.Now())
 		}
 	}
+}
+
+func (n *Node) signed(msg *protocol.Message) *protocol.Message {
+	if err := msg.Sign(n.ident.PrivateKey); err != nil {
+		n.log.Warnf("sign: %v", err)
+	}
+	return msg
+}
+
+func (n *Node) whoami() string {
+	id := n.ident
+	transport := "plain TCP (insecure)"
+	if n.TLS() {
+		transport = "TLS 1.3 (mutual Ed25519)"
+	}
+	created := ""
+	if !id.CreatedAt.IsZero() {
+		created = "\n  Created:    " + id.CreatedAt.UTC().Format(time.RFC3339)
+	}
+	return fmt.Sprintf(`Local identity:
+  Peer ID:    %s
+  Short ID:   %s
+  Fingerprint: %s
+  Nickname:   %s
+  Public key: %s
+  Transport:  %s
+  Listen:     %s
+  Data dir:   %s%s`,
+		id.PeerID, id.ShortID(), id.Fingerprint(), n.Nick(), id.PublicKeyHex(),
+		transport, n.ListenAddr(), n.DataDir(), created)
 }
 
 func display(msg *protocol.Message) string {

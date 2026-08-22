@@ -209,3 +209,51 @@ func TestHandleLineUnknownCommand(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestTLSEnabledByDefault(t *testing.T) {
+	n := startNode(t, "A")
+	if !n.TLS() {
+		t.Fatal("TLS should be enabled by default")
+	}
+}
+
+func TestWhoami(t *testing.T) {
+	n := startNode(t, "Alice")
+	ev := n.Subscribe()
+	if _, err := n.HandleLine("/whoami"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case e := <-ev:
+		if !strings.Contains(e.Text, n.Ident().PeerID) {
+			t.Fatalf("whoami missing peer id: %s", e.Text)
+		}
+		if !strings.Contains(e.Text, "TLS 1.3") {
+			t.Fatalf("whoami missing TLS: %s", e.Text)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for /whoami")
+	}
+}
+
+func TestPlainDisablesTLS(t *testing.T) {
+	cfg := config.Default()
+	cfg.Port = 0
+	cfg.ListenHost = "127.0.0.1"
+	cfg.DataDir = t.TempDir()
+	cfg.Nickname = "P"
+	cfg.NoDiscover = true
+	cfg.Plain = true
+	ident, err := identity.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := node.Start(context.Background(), cfg, ident, logger.New(io.Discard, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = n.Close() })
+	if n.TLS() {
+		t.Fatal("--plain should disable TLS")
+	}
+}

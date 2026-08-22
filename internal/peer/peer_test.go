@@ -134,6 +134,9 @@ func TestHandshakeRejectsMismatchedPeerID(t *testing.T) {
 	}
 	defer conn.Close()
 	bad := protocol.NewHello(aID.PeerID, bID.PublicKeyHex(), "evil")
+	if err := bad.Sign(bID.PrivateKey); err != nil {
+		t.Fatal(err)
+	}
 	if err := protocol.Write(conn, bad); err != nil {
 		t.Fatal(err)
 	}
@@ -241,5 +244,39 @@ func TestOversizedMessageCloses(t *testing.T) {
 	case <-down:
 	case <-time.After(2 * time.Second):
 		t.Fatal("oversized message should drop the connection")
+	}
+}
+
+func TestTLSTwoPeers(t *testing.T) {
+	aID, _ := identity.Generate()
+	bID, _ := identity.Generate()
+	am := testManager(t, aID)
+	bm := testManager(t, bID)
+	am.EnableTLS()
+	bm.EnableTLS()
+
+	ln := listen(t)
+	errCh := make(chan error, 1)
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			errCh <- err
+			return
+		}
+		_, err = bm.HandshakeAndAdopt(c, bID, "B", true, 3*time.Second)
+		errCh <- err
+	}()
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := am.HandshakeAndAdopt(conn, aID, "A", false, 3*time.Second); err != nil {
+		t.Fatalf("tls dial handshake: %v", err)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatalf("tls accept handshake: %v", err)
+	}
+	if am.Len() != 1 || bm.Len() != 1 {
+		t.Fatalf("tls peer counts A=%d B=%d", am.Len(), bm.Len())
 	}
 }

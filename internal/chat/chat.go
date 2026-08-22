@@ -23,6 +23,7 @@ const (
 	KindMe
 	KindMsg
 	KindDiscover
+	KindWhoami
 	KindQuit
 	KindUnknown
 )
@@ -76,6 +77,8 @@ func Parse(line string) Command {
 		}
 	case "/discover":
 		cmd.Kind = KindDiscover
+	case "/whoami", "/id":
+		cmd.Kind = KindWhoami
 	case "/quit", "/exit":
 		cmd.Kind = KindQuit
 	default:
@@ -98,6 +101,7 @@ Commands:
   /me <action>               Send an action to the current channel
   /msg <peer-id> <text>      Direct message a connected peer
   /discover                  Show nearby LAN peers (UDP multicast)
+  /whoami                    Show local cryptographic identity
   /quit                      Exit
 `)
 }

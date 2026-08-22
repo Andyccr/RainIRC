@@ -35,7 +35,7 @@ func (t *Terminal) printf(format string, args ...any) {
 func (t *Terminal) Run(ctx context.Context) error {
 	n := t.node
 	id := n.Ident()
-	t.printf("P2PIRC  peer=%s  nick=%s  port=%d\n", id.ShortID(), n.Nick(), n.Port())
+	t.printf("P2PIRC  peer=%s  nick=%s  port=%d  tls=%s\n", id.ShortID(), n.Nick(), n.Port(), tlsLabel(n.TLS()))
 	t.printf("Listening on %s\n", n.ListenAddr())
 	if hint := lanAddress(n.Port()); hint != "" {
 		t.printf("LAN address: %s   (other peers: /connect %s)\n", hint, hint)
@@ -105,6 +105,13 @@ func (t *Terminal) printPrompt() {
 		cur = "(none)"
 	}
 	t.printf("%s> ", cur)
+}
+
+func tlsLabel(on bool) string {
+	if on {
+		return "on"
+	}
+	return "off"
 }
 
 func lanAddress(port int) string {

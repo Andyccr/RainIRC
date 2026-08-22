@@ -29,6 +29,7 @@ type Identity struct {
 	PublicKey  ed25519.PublicKey
 	PeerID     string // full SHA-256(public key) hex
 	Nickname   string // cosmetic; not an identity
+	CreatedAt  time.Time
 }
 
 func (id *Identity) ShortID() string {
@@ -47,6 +48,14 @@ func (id *Identity) DefaultNickname() string {
 		return id.Nickname
 	}
 	return id.ShortID()
+}
+
+// Fingerprint is the first 16 hex characters of the Peer ID.
+func (id *Identity) Fingerprint() string {
+	if len(id.PeerID) < 16 {
+		return id.PeerID
+	}
+	return id.PeerID[:16]
 }
 
 // DerivePeerID returns the full hex SHA-256 of the raw public key bytes.
@@ -70,6 +79,7 @@ func Generate() (*Identity, error) {
 		PrivateKey: priv,
 		PublicKey:  pub,
 		PeerID:     DerivePeerID(pub),
+		CreatedAt:  time.Now().UTC(),
 	}, nil
 }
 
@@ -82,12 +92,17 @@ type fileRecord struct {
 }
 
 func (id *Identity) toRecord() fileRecord {
+	created := id.CreatedAt.UTC()
+	if created.IsZero() {
+		created = time.Now().UTC()
+		id.CreatedAt = created
+	}
 	return fileRecord{
 		PeerID:     id.PeerID,
 		PublicKey:  hex.EncodeToString(id.PublicKey),
 		PrivateKey: hex.EncodeToString(id.PrivateKey),
 		Nickname:   id.Nickname,
-		CreatedAt:  time.Now().UTC().Format(time.RFC3339),
+		CreatedAt:  created.Format(time.RFC3339),
 	}
 }
 
@@ -116,12 +131,18 @@ func fromRecord(rec fileRecord) (*Identity, error) {
 	if rec.PeerID != "" && rec.PeerID != peerID {
 		return nil, fmt.Errorf("stored peer_id does not match public key")
 	}
-	return &Identity{
+	id := &Identity{
 		PrivateKey: priv,
 		PublicKey:  pub,
 		PeerID:     peerID,
 		Nickname:   rec.Nickname,
-	}, nil
+	}
+	if rec.CreatedAt != "" {
+		if ts, err := time.Parse(time.RFC3339, rec.CreatedAt); err == nil {
+			id.CreatedAt = ts
+		}
+	}
+	return id, nil
 }
 
 func Path(dir string) string {

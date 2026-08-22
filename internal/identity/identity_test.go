@@ -81,6 +81,15 @@ func TestIdentityPersistence(t *testing.T) {
 	if loaded.Nickname != "Alice" {
 		t.Fatalf("nickname = %q", loaded.Nickname)
 	}
+	if loaded.CreatedAt.IsZero() {
+		t.Fatal("created_at should survive restart")
+	}
+	if !loaded.CreatedAt.Equal(id.CreatedAt) && loaded.CreatedAt.Unix() != id.CreatedAt.Unix() {
+		t.Fatalf("created_at changed: %v -> %v", id.CreatedAt, loaded.CreatedAt)
+	}
+	if len(loaded.Fingerprint()) != 16 {
+		t.Fatalf("fingerprint %q", loaded.Fingerprint())
+	}
 	info, err := os.Stat(filepath.Join(dir, identityFileName))
 	if err != nil {
 		t.Fatal(err)

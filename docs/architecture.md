@@ -1,8 +1,7 @@
 # P2P-IRC architecture
 
-This document describes the MVP (version 0.1): a LAN-first, serverless
-peer-to-peer chat process. There is no central server process in this
-repository.
+This document describes version **0.2**: a LAN-first, serverless peer-to-peer
+chat process. There is no central server process in this repository.
 
 ## Peer model
 
@@ -23,7 +22,7 @@ Nicknames are labels. They are never used as identity.
      +----------+           +----------+           +----------+
      | UI/chat  |           | UI/chat  |           | UI/chat  |
      | router   |           | router   |           | router   |
-     | peers    |<---TCP--->| peers    |<---TCP--->| peers    |
+     | peers    |<-TLS/TCP->| peers    |<-TLS/TCP->| peers    |
      +----------+           +----------+           +----------+
 ```
 
@@ -39,9 +38,15 @@ hardware-backed keystore. See the README security section.
 
 Handshake proof:
 
-1. Remote sends `public_key` and `peer_id`
-2. Local computes `SHA-256(decode(public_key))`
-3. Connection is rejected if that digest is not exactly `peer_id`
+1. TLS 1.3 mutual handshake with self-signed Ed25519 certificates
+2. Remote sends signed `public_key` and `peer_id` in hello/welcome
+3. Local checks certificate pubkey == hello pubkey
+4. Local computes `SHA-256(decode(public_key))`
+5. Connection is rejected if that digest is not exactly `peer_id`
+6. Signature is rejected if it does not verify under that key
+
+Chat/join/leave frames are also signed, so a two-hop message from a peer you
+never dialed is still attributable.
 
 ## Connection lifecycle
 
@@ -49,10 +54,13 @@ Handshake proof:
 dial / accept
      |
      v
-  handshake (hello -> welcome)
+  TLS 1.3 (mutual Ed25519 certs)   [--plain skips this]
      |
      v
-  verify public key <-> peer id
+  handshake (signed hello -> signed welcome)
+     |
+     v
+  verify cert pubkey == hello pubkey == peer id
      |
      v
   register in peer manager
@@ -166,24 +174,21 @@ and drops on overflow rather than stalling the network.
 | Peer disconnect | Unregister, print a system line |
 | Corrupt `identity.json` | Refuse to start (do not silently mint a new key) |
 
-## Transport seam (for later encryption)
-
-Application logic talks to `net.Conn` only through:
-
-- `protocol.Read(*bufio.Reader)` / `protocol.Write(io.Writer)`
-- `peer.Manager.HandshakeAndAdopt(net.Conn, ...)`
-
-A future TLS or Noise wrapper can sit under `HandshakeAndAdopt` without
-changing channels, gossip, or the UI:
+## Transport
 
 ```
-Plain TCP  ->  Secure Transport  ->  NDJSON protocol  ->  router / chat
+TCP  ->  TLS 1.3 (mutual Ed25519)  ->  NDJSON protocol  ->  router / chat
 ```
 
-The MVP does not implement that wrapper. Transport is plaintext TCP.
+`--plain` removes the TLS box. Application logic still talks to `net.Conn`
+through `protocol.Read` / `protocol.Write` and `HandshakeAndAdopt`, so a
+future Noise wrapper can replace TLS without touching channels or the UI.
+
+TLS here is **not** WebPKI. Certificates are generated from the same Ed25519
+identity used for Peer IDs. Hostname checks are skipped; identity is the key.
 
 ## LAN discovery
 
 Optional UDP multicast to `239.255.77.77:7776`. Announcements carry peer
 ID, nickname, and TCP port. They are not a trust signal; `/connect` still
-performs the TCP handshake.
+performs the TLS handshake.
