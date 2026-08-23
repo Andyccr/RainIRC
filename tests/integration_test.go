@@ -353,7 +353,7 @@ func TestVersionCommand(t *testing.T) {
 	}
 	select {
 	case e := <-ev:
-		if !strings.Contains(e.Text, "0.4.1") {
+		if !strings.Contains(e.Text, "0.4.2") {
 			t.Fatalf("/version: %s", e.Text)
 		}
 	case <-time.After(2 * time.Second):
@@ -449,4 +449,55 @@ func TestPeerDownClearsChannelMember(t *testing.T) {
 		time.Sleep(15 * time.Millisecond)
 	}
 	t.Fatal("Bob still in channel roster after disconnect")
+}
+
+func TestNamesCommand(t *testing.T) {
+	a := startNode(t, "Alice")
+	b := startNode(t, "Bob")
+	if err := a.Connect(b.DialAddr()); err != nil {
+		t.Fatal(err)
+	}
+	waitPeers(t, a, 1)
+	waitPeers(t, b, 1)
+	ev := a.Subscribe()
+	if _, err := a.HandleLine("/names"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case e := <-ev:
+		if !strings.Contains(e.Text, "Alice") {
+			t.Fatalf("/names missing self: %s", e.Text)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for /names")
+	}
+}
+
+func TestNickPropagates(t *testing.T) {
+	a := startNode(t, "Alice")
+	b := startNode(t, "Bob")
+	if err := a.Connect(b.DialAddr()); err != nil {
+		t.Fatal(err)
+	}
+	waitPeers(t, a, 1)
+	waitPeers(t, b, 1)
+	alice := a.Ident().PeerID
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if b.Channels().Members("#general")[alice] != "" {
+			break
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	if err := a.SetNick("Alicia"); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if b.Channels().Members("#general")[alice] == "Alicia" {
+			return
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	t.Fatalf("nick did not propagate, have %q", b.Channels().Members("#general")[alice])
 }

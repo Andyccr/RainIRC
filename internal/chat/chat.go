@@ -30,6 +30,7 @@ const (
 	KindAddr
 	KindVersion
 	KindStats
+	KindNames
 	KindQuit
 	KindUnknown
 )
@@ -97,6 +98,8 @@ func Parse(line string) Command {
 		cmd.Kind = KindVersion
 	case "/stats":
 		cmd.Kind = KindStats
+	case "/names", "/who":
+		cmd.Kind = KindNames
 	case "/quit", "/exit":
 		cmd.Kind = KindQuit
 	default:
@@ -118,7 +121,8 @@ Commands:
   /join <#channel>           Join a channel
   /leave <#channel>          Leave a channel
   /channels                  List channels
-  /nick <name>               Set nickname (cosmetic only)
+  /names [#channel]          List members of a channel
+  /nick <name>               Set nickname (cosmetic; gossiped via join)
   /me <action>               Send an action to the current channel
   /msg <peer-id> <text>      Direct message a connected peer
   /discover [connect]        Show nearby LAN peers; connect joins verified ones

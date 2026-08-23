@@ -4,12 +4,12 @@ package version
 const (
 	Major = 0
 	Minor = 4
-	Patch = 1
+	Patch = 2
 	Name  = "p2pirc"
 )
 
 // Version is the semver string (major.minor.patch).
-const Version = "0.4.1"
+const Version = "0.4.2"
 
 func String() string {
 	return Name + " " + Version
