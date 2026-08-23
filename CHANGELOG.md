@@ -6,6 +6,31 @@ All notable changes to P2P-IRC are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/).
 Versions match `internal/version`.
 
+## [0.4.2] - 2026-08-23
+
+### Architecture / 架构
+
+- Split the node into lifecycle (`node.go`), commands (`commands.go`),
+  gossip hooks (`handlers.go`), dial/reconnect (`connect.go`), and NAT
+  (`nat.go`). Commands are a table, not a growing switch.
+  节点按生命周期 / 命令 / gossip / 拨号 / NAT 拆文件；命令用表注册。
+- Parallel dial of saved addresses (first TCP handshake wins, cap 4).
+  多地址并行拨号，先握手成功者胜出。
+- `--reconnect` keeps retrying known peers every 5s, not only at startup.
+  `--reconnect` 持续重试已知节点，而不是只在启动时试一次。
+
+### Added / 新增
+
+- `/names` (`/who`): list channel members already tracked locally.
+  `/names` 列出本机已知的频道成员。
+- Nickname changes gossip through existing signed `join` frames (no protocol bump).
+  改昵称走现有签名 `join`，不升握手版本。
+- Per-sender gossip rate limit (30 frames/s, local drop, not forwarded).
+  按发送者限制 gossip（每秒 30 帧，本机丢弃不转发）。
+- Repeat `join` for an existing member is no longer printed as a second join
+  (covers nick-change and connection resync).
+  已在成员表中的重复 `join` 不再刷第二条「加入」通知。
+
 ## [0.4.1] - 2026-08-22
 
 ### Fixed / 修复

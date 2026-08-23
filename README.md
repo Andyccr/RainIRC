@@ -26,7 +26,7 @@ P2P > 中心服务器
 
 这**不是**完整 IRC RFC 实现。它只是一个小的 Go 程序：IRC 式频道 + 直连 TCP/TLS。
 
-当前版本 **0.4.1**：TLS 1.3、消息签名、签名局域网发现、地址候选 / STUN / 可选 UPnP、本地别名、连接与缓存加固、CI。
+当前版本 **0.4.2**：TLS 1.3、签名、局域网发现、地址候选、节点按职责拆分、并行拨号、持续重连、`/names`。
 
 ### 为什么要无服务器？
 
@@ -100,7 +100,7 @@ make build
 | `--no-discover` | 关 | 关闭局域网 UDP 组播发现 |
 | `--plain` | 关 | **关闭 TLS**（不安全，仅调试） |
 | `--auto-connect` | 关 | 自动连接**已验签**的局域网邻居 |
-| `--reconnect` | 关 | 启动时重连 `peers.json` 里上次的地址 |
+| `--reconnect` | 关 | 每 5 秒重试 `peers.json` 里上次记下的 TCP 地址 |
 | `--stun` | `stun.l.google.com:19302` | STUN 服务器（UDP Binding；**不是** TCP 打洞） |
 | `--no-stun` | 关 | 不查询 STUN |
 | `--upnp` | 关 | 尝试 IGD 把 TCP 监听端口映射出去（常失败） |
@@ -157,7 +157,8 @@ make build
 /join <#channel>           加入频道
 /leave <#channel>          离开频道
 /channels                  列出频道
-/nick <name>               设置昵称（仅显示）
+/names [#channel]          列出频道成员
+/nick <name>               设置昵称（仅显示，会通过签名 join 传播）
 /me <action>               发送动作
 /msg <peer-id> <text>      给直连节点发私信
 /discover [connect]        显示附近节点；connect 会连上已验签的邻居
@@ -186,7 +187,7 @@ TCP 上先做 **TLS 1.3**（ALPN `p2pirc/2`），再跑换行分隔 JSON。握�
 ./p2pirc --nickname Alice --auto-connect
 ```
 
-只会对**验签通过**的邻居发起 TCP/TLS。`/discover connect` 是一次性手动版。`--reconnect` 会在启动时尝试 `peers.json` 里记下的上次地址。
+只会对**验签通过**的邻居发起 TCP/TLS。`/discover connect` 是一次性手动版。`--reconnect` 每 5 秒重试 `peers.json` 里记下的上次 TCP 地址（未完成的一轮不会叠跑）。
 
 组播被墙时，手动 `/connect` 仍然可用。未签名的发现包只会显示，不会被 auto-connect。
 
@@ -200,7 +201,7 @@ STUN（默认开启）只做 **UDP Binding**：它告诉你 NAT 看到的 UDP �
 
 ### 安全（如实说明）
 
-0.4.1 提供：
+0.4.2 提供：
 
 1. 链路：**TLS 1.3 双向证书**（证书由本机 Ed25519 身份自签，无 CA）
 2. 消息：可 gossip 的帧带 **Ed25519 签名**，`sender` 必须等于 `SHA-256(公钥)`
@@ -211,8 +212,9 @@ STUN（默认开启）只做 **UDP Binding**：它告诉你 NAT 看到的 UDP �
 7. 别名只存在本机，不能冒充 Peer ID
 8. `/addr` 如实区分局域网 TCP、STUN UDP 映射、UPnP TCP 映射
 9. 连接数上限、畸形帧断开、签名时间窗
+10. 按发送者限制 gossip（本机每秒 30 帧，超限丢弃不转发）
 
-0.4.1 **仍然不是**：
+0.4.2 **仍然不是**：
 
 - 面向互联网的匿名聊天（没有 TCP 打洞；STUN 不是打洞）
 - 完美前向保密的 Noise 配置（TLS 1.3 有自己的握手；长期身份密钥也用于 TLS 证书）
@@ -253,7 +255,8 @@ go vet ./...
 | 0.2 | TLS 1.3 + 消息签名 + `/whoami` |
 | 0.3 | 签名发现、自动连接、本地别名 |
 | 0.4 | 地址候选、STUN、可选 UPnP、CI |
-| 0.4.1 | 连接/缓存加固、时间窗、/stats（当前） |
+| 0.4.1 | 连接/缓存加固、时间窗、/stats |
+| 0.4.2 | 节点拆分、并行拨号、持续重连、/names（当前） |
 | 0.5 | 可选中继 / 会合，跨互联网 P2P |
 | 0.6 | 加密持久化历史 |
 | 0.7 | 文件传输 |
@@ -279,7 +282,7 @@ LOCAL-FIRST > CLOUD-FIRST
 
 This is **not** a full IRC RFC implementation. It is a small Go program with an IRC-like channel model over direct TCP/TLS.
 
-Current version **0.4.1**: TLS 1.3, signed messages, signed LAN discovery, address candidates / STUN / optional UPnP, local aliases, connection/cache hardening, and CI.
+Current version **0.4.2**: TLS 1.3, signatures, LAN discovery, address candidates, a split node, parallel dial, persistent reconnect, and `/names`.
 
 ### Why serverless?
 
@@ -353,7 +356,7 @@ make build
 | `--no-discover` | off | Disable LAN UDP multicast discovery |
 | `--plain` | off | **Disable TLS** (insecure; debug only) |
 | `--auto-connect` | off | Automatically connect to **verified** LAN peers |
-| `--reconnect` | off | Reconnect to last-known addresses in `peers.json` on start |
+| `--reconnect` | off | Retry last-known TCP addresses from `peers.json` every 5s |
 | `--stun` | `stun.l.google.com:19302` | STUN server (UDP Binding; **not** a TCP hole punch) |
 | `--no-stun` | off | Do not query STUN |
 | `--upnp` | off | Try IGD mapping of the TCP listen port (often fails) |
@@ -410,7 +413,8 @@ Type a line of text to send it to the current channel (`#general` by default).
 /join <#channel>           Join a channel
 /leave <#channel>          Leave a channel
 /channels                  List channels
-/nick <name>               Set nickname (cosmetic)
+/names [#channel]          List members of a channel
+/nick <name>               Set nickname (cosmetic; gossiped via signed join)
 /me <action>               Send an action
 /msg <peer-id> <text>      Direct message a connected peer
 /discover [connect]        Show nearby LAN peers; connect dials verified ones
@@ -439,7 +443,7 @@ Auto-connect is **off** by default:
 ./p2pirc --nickname Alice --auto-connect
 ```
 
-Only **verified** announcements trigger a TCP/TLS dial. `/discover connect` is the one-shot version. `--reconnect` retries last-seen addresses from `peers.json` at startup.
+Only **verified** announcements trigger a TCP/TLS dial. `/discover connect` is the one-shot version. `--reconnect` retries last-seen TCP addresses from `peers.json` every 5 seconds (overlapping passes are skipped).
 
 If multicast is blocked, `/connect` still works. Unsigned discovery packets are shown but never auto-connected.
 
@@ -453,7 +457,7 @@ STUN (on by default for the CLI) is a **UDP Binding** query: it reports the NAT-
 
 ### Security (honest)
 
-Version 0.4.1 provides:
+Version 0.4.2 provides:
 
 1. Link: **mutual TLS 1.3** with self-signed Ed25519 certificates (no CA)
 2. Messages: gossip frames carry an **Ed25519 signature**; `sender` must be `SHA-256(public key)`
@@ -464,6 +468,7 @@ Version 0.4.1 provides:
 7. Aliases are local-only and never replace the Peer ID
 8. `/addr` distinguishes LAN TCP, STUN UDP mappings, and UPnP TCP mappings
 9. Peer/handshake caps, malformed-frame disconnect, signed timestamp window
+10. Per-sender gossip rate limit (30 frames/s locally; excess is dropped, not forwarded)
 
 It does **not** provide:
 
@@ -506,7 +511,8 @@ Tests bind to `127.0.0.1` with ephemeral ports and temporary directories. They d
 | 0.2 | TLS 1.3, message signatures, `/whoami` |
 | 0.3 | Signed discovery, auto-connect, local aliases |
 | 0.4 | Address candidates, STUN, optional UPnP, CI |
-| 0.4.1 | Connection/cache hardening, timestamp window, `/stats` (current) |
+| 0.4.1 | Connection/cache hardening, timestamp window, `/stats` |
+| 0.4.2 | Split node, parallel dial, persistent reconnect, `/names` (current) |
 | 0.5 | Optional relays / rendezvous for Internet-wide P2P |
 | 0.6 | Encrypted persistent history |
 | 0.7 | File transfer |

@@ -1,11 +1,14 @@
 package node
 
 import (
+	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Andyccr/RainIRC/internal/config"
@@ -73,6 +76,98 @@ func (n *Node) resolveConnectTargets(target string) ([]string, error) {
 	return nil, fmt.Errorf("cannot resolve %q (try host:port, alias, or /discover)", target)
 }
 
+func (n *Node) Connect(address string) error {
+	addrs, err := n.resolveConnectTargets(address)
+	if err != nil {
+		return err
+	}
+	if len(addrs) == 1 {
+		return n.dialOne(n.ctx, addrs[0])
+	}
+	return n.dialFirst(addrs)
+}
+
+func (n *Node) dialFirst(addrs []string) error {
+	ctx, cancel := context.WithCancel(n.ctx)
+	defer cancel()
+	type result struct{ err error }
+	ch := make(chan result, len(addrs))
+	sem := make(chan struct{}, 4)
+	var wg sync.WaitGroup
+	for _, a := range addrs {
+		a := a
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				ch <- result{ctx.Err()}
+				return
+			}
+			err := n.dialOne(ctx, a)
+			if err == nil {
+				cancel()
+			}
+			ch <- result{err}
+		}()
+	}
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
+	var last error
+	ok := false
+	for r := range ch {
+		if r.err == nil {
+			ok = true
+			continue
+		}
+		if errors.Is(r.err, context.Canceled) {
+			continue
+		}
+		last = r.err
+		n.log.Debugf("dial: %v", r.err)
+	}
+	if ok {
+		return nil
+	}
+	if last == nil {
+		return fmt.Errorf("no addresses to try")
+	}
+	return last
+}
+
+func (n *Node) dialOne(ctx context.Context, address string) error {
+	if ctx == nil {
+		ctx = n.ctx
+	}
+	d := net.Dialer{Timeout: n.cfg.DialTimeout}
+	conn, err := d.DialContext(ctx, "tcp", address)
+	if err != nil {
+		return fmt.Errorf("dial %s: %w", address, err)
+	}
+	if ctx.Err() != nil {
+		_ = conn.Close()
+		return ctx.Err()
+	}
+	c, err := n.peers.HandshakeAndAdopt(conn, n.ident, n.Nick(), false, n.cfg.HandshakeWait)
+	if err != nil {
+		if errors.Is(err, peer.ErrDuplicate) {
+			return nil
+		}
+		return err
+	}
+	if c != nil {
+		info := c.Info()
+		info.Inbound = false
+		info.Addr = address
+		n.observePeer(info)
+	}
+	return nil
+}
+
 func (n *Node) nearbySnapshot() []discovery.Announcement {
 	if n.disc == nil {
 		return nil
@@ -93,11 +188,32 @@ func (n *Node) tryAutoConnect(a discovery.Announcement) {
 	}
 }
 
-func (n *Node) reconnectKnown() {
+func (n *Node) reconnectLoop() {
 	if n.dir == nil {
 		return
 	}
 	time.Sleep(250 * time.Millisecond)
+	n.reconnectOnce()
+	t := time.NewTicker(5 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-n.ctx.Done():
+			return
+		case <-t.C:
+			n.reconnectOnce()
+		}
+	}
+}
+
+func (n *Node) reconnectOnce() {
+	if n.dir == nil {
+		return
+	}
+	if !n.reconnectMu.TryLock() {
+		return
+	}
+	defer n.reconnectMu.Unlock()
 	for _, rec := range n.dir.ReconnectTargets() {
 		if rec.PeerID == n.ident.PeerID || n.peers.Connected(rec.PeerID) {
 			continue

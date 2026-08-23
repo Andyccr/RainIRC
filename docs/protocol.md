@@ -100,6 +100,9 @@ Receivers **must** also reject `hello`/`welcome`/`chat`/`join`/`leave` when
 past (Unix seconds, local clock). This stops replay after the seen-ID cache
 expires. `ping`/`pong` are not signed and are not checked this way.
 
+Implementations **may** drop additional signed gossip locally (this process
+keeps 30 frames per sender per second). That limit is not a wire field.
+
 ## Handshake
 
 The **dialer** speaks first, after TLS.
@@ -212,6 +215,11 @@ may be omitted when `to` is present.
   "signature": "<128 hex chars>"
 }
 ```
+
+A later `join` from the same `sender` on the same channel with a new
+`nickname` is a nick change, not a second membership. Receivers update the
+member table. This process uses that for `/nick` so the handshake version
+stays at 2.
 
 ### `leave`
 

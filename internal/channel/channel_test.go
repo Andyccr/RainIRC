@@ -66,6 +66,16 @@ func TestMemberJoinLeave(t *testing.T) {
 	}
 }
 
+func TestUpdateNick(t *testing.T) {
+	m := NewManager("local", 10)
+	m.Join("#general", "Alice")
+	m.MemberJoin("#general", "remote", "Bob")
+	m.UpdateNick("remote", "Robert")
+	if m.Members("#general")["remote"] != "Robert" {
+		t.Fatalf("nick=%q", m.Members("#general")["remote"])
+	}
+}
+
 func TestMemberLeaveAll(t *testing.T) {
 	m := NewManager("local", 10)
 	m.Join("#general", "Alice")

@@ -1,9 +1,8 @@
 # P2P-IRC architecture
 
-This document describes version **0.4.1**: a LAN-first, serverless peer-to-peer
-chat process with optional STUN/UPnP **address hints**, bounded mesh degree,
-and a timestamp window on signed frames. There is no central server process
-in this repository. STUN is not a TCP NAT traversal.
+This document describes version **0.4.2**: a LAN-first, serverless peer-to-peer
+chat process. The node is split by concern (lifecycle, commands, gossip,
+dial, NAT). STUN is not a TCP NAT traversal. There is no central server.
 
 ## Peer model
 
@@ -17,7 +16,29 @@ Every running `p2pirc` binary is a **peer**. A peer has:
 - an in-memory history per joined channel
 - a bounded set of seen message IDs
 
-Nicknames are labels. They are never used as identity.
+Nicknames are labels. They are never used as identity. A `/nick` change is
+gossiped as a signed `join` on each locally joined channel so other 0.4.2
+peers update `Members` without a new wire type.
+
+## Package layout
+
+```
+cmd/p2pirc          process entry
+internal/node       Node: Start/Close (node.go), commands.go, handlers.go,
+                    connect.go, nat.go
+internal/peer       TCP/TLS sessions
+internal/router     gossip + seen-ID cache
+internal/protocol   NDJSON + signatures
+internal/channel    local membership + history
+internal/chat       line parser + help text
+internal/discovery  LAN multicast
+internal/directory  local peers.json
+internal/limiter    per-sender sliding window (local policy)
+internal/transport  TLS 1.3 from the Ed25519 identity
+```
+
+UI lines go `chat.Parse` → `commands` table → Node methods. Gossip frames
+go peer read loop → verify / timestamp window / rate-limit → router → `onRouted`.
 
 ```
         Peer A                 Peer B                 Peer C
@@ -109,8 +130,14 @@ Self-connections (same Peer ID on both ends) are refused.
 Routable types: `chat`, `join`, `leave`.
 
 ```
-receive message M from peer P
+receive signed frame M from peer P
         |
+        v
+   signature + timestamp window OK?
+        |--no--> drop (do not forward)
+        v
+   local per-sender rate (30/s)?
+        |--no--> drop (do not remember, do not forward)
         v
    seen(M.id) ? --yes--> drop
         |
@@ -122,6 +149,7 @@ receive message M from peer P
 ```
 
 Locally composed messages use the same path with `P` empty (forward to all).
+The rate window is **local policy**, not a protocol field.
 
 Direct messages (`/msg`) are **not** flooded. They are written only on the
 TCP session to that peer.
@@ -144,7 +172,9 @@ consistent.
 The process auto-joins `#general` locally on startup. When a new TCP peer
 comes up, the local node sends `join` for each currently joined channel to
 that peer only (so the new neighbor learns membership without re-flooding
-the mesh).
+the mesh). A later `join` from a sender already in the member table updates
+the nickname and does not print a second "joined" line. That is how `/nick`
+spreads without a new wire type.
 
 ## Concurrency model
 
@@ -155,8 +185,11 @@ Expected goroutines:
 | `main` / UI input | process |
 | TCP `acceptLoop` | process |
 | seen-cache sweep | process |
+| `peers.json` debounce save | process |
 | discovery read + announce (optional) | process |
 | STUN Binding + optional UPnP (fail-soft) | startup |
+| `--reconnect` loop (optional, 5s) | process |
+| `--auto-connect` ticker (optional, 10s) | process |
 | per-connection read loop | connection |
 | per-connection write loop (includes ping) | connection |
 
@@ -180,6 +213,7 @@ and drops on overflow rather than stalling the network.
 | Malformed JSON after handshake | Skip line; disconnect after 5 consecutive |
 | Handshake slots / max peers full | Close the new socket |
 | Signed frame outside clock window | Drop, do not forward |
+| Per-sender gossip over local rate | Drop, do not forward |
 | Peer disconnect | Unregister, drop channel membership, print a system line |
 | Corrupt `identity.json` | Refuse to start (do not silently mint a new key) |
 
@@ -202,10 +236,13 @@ Optional UDP multicast to `239.255.77.77:7776`. Version-2 announcements are
 Ed25519-signed (same identity as TLS). Unsigned packets are kept for display
 as `unverified` and are never used by `--auto-connect`.
 
-`--auto-connect` dials verified neighbors. `--reconnect` dials last-seen
-addresses from `~/.p2pirc/peers.json`. `/alias` stores a **local** label
-for a Peer ID; `/connect laptop` resolves through that directory. Aliases
-never travel on the wire and never replace cryptographic identity.
+`--auto-connect` dials verified neighbors. `--reconnect` retries last-seen
+TCP addresses from `~/.p2pirc/peers.json` every 5 seconds. Overlapping
+passes are skipped so a slow dial does not pile up. `/alias` stores a
+**local** label for a Peer ID; `/connect laptop` resolves through that
+directory. Aliases never travel on the wire and never replace cryptographic
+identity. `/connect` to a saved peer tries `last_addr` then extra `addrs`
+in parallel (first successful handshake wins, at most 4 at once).
 
 `hello`/`welcome` may include an unsigned `port` hint so an inbound peer
 can be reconnection-addressed (remote host + advertised listen port).
@@ -244,4 +281,6 @@ UPnP, when it works, maps the TCP listen port through the IGD. That address
 stop the node.
 
 `/connect alias` tries `last_addr` then saved extra `addrs` from
-`peers.json`. Full UDP hole punching still needs a rendezvous (roadmap 0.5).
+`peers.json` in parallel. Full UDP hole punching still needs a rendezvous
+(roadmap 0.5). Relays are not in this version: adding a required helper
+node would give up the serverless property.
