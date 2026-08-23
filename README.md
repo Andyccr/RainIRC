@@ -26,7 +26,7 @@ P2P > 中心服务器
 
 这**不是**完整 IRC RFC 实现。它只是一个小的 Go 程序：IRC 式频道 + 直连 TCP/TLS。
 
-当前版本 **0.4.2**：TLS 1.3、签名、局域网发现、地址候选、节点按职责拆分、并行拨号、持续重连、`/names`。
+当前版本 **0.4.3**：TLS 1.3、签名、局域网发现、地址候选、节点拆分、并行拨号、带退避的持续重连、`/names`。
 
 ### 为什么要无服务器？
 
@@ -187,7 +187,7 @@ TCP 上先做 **TLS 1.3**（ALPN `p2pirc/2`），再跑换行分隔 JSON。握�
 ./p2pirc --nickname Alice --auto-connect
 ```
 
-只会对**验签通过**的邻居发起 TCP/TLS。`/discover connect` 是一次性手动版。`--reconnect` 每 5 秒重试 `peers.json` 里记下的上次 TCP 地址（未完成的一轮不会叠跑）。
+只会对**验签通过**的邻居发起 TCP/TLS。`/discover connect` 是一次性手动版。`--reconnect` 每 5 秒查看 `peers.json` 里上次的 TCP 地址；失败的节点会指数退避（5s→60s），未完成的一轮不会叠跑。
 
 组播被墙时，手动 `/connect` 仍然可用。未签名的发现包只会显示，不会被 auto-connect。
 
@@ -201,7 +201,7 @@ STUN（默认开启）只做 **UDP Binding**：它告诉你 NAT 看到的 UDP �
 
 ### 安全（如实说明）
 
-0.4.2 提供：
+0.4.3 提供：
 
 1. 链路：**TLS 1.3 双向证书**（证书由本机 Ed25519 身份自签，无 CA）
 2. 消息：可 gossip 的帧带 **Ed25519 签名**，`sender` 必须等于 `SHA-256(公钥)`
@@ -214,7 +214,7 @@ STUN（默认开启）只做 **UDP Binding**：它告诉你 NAT 看到的 UDP �
 9. 连接数上限、畸形帧断开、签名时间窗
 10. 按发送者限制 gossip（本机每秒 30 帧，超限丢弃不转发）
 
-0.4.2 **仍然不是**：
+0.4.3 **仍然不是**：
 
 - 面向互联网的匿名聊天（没有 TCP 打洞；STUN 不是打洞）
 - 完美前向保密的 Noise 配置（TLS 1.3 有自己的握手；长期身份密钥也用于 TLS 证书）
@@ -256,7 +256,8 @@ go vet ./...
 | 0.3 | 签名发现、自动连接、本地别名 |
 | 0.4 | 地址候选、STUN、可选 UPnP、CI |
 | 0.4.1 | 连接/缓存加固、时间窗、/stats |
-| 0.4.2 | 节点拆分、并行拨号、持续重连、/names（当前） |
+| 0.4.2 | 节点拆分、并行拨号、持续重连、/names |
+| 0.4.3 | 重连退避、拨号互斥、CI 去重（当前） |
 | 0.5 | 可选中继 / 会合，跨互联网 P2P |
 | 0.6 | 加密持久化历史 |
 | 0.7 | 文件传输 |
@@ -282,7 +283,7 @@ LOCAL-FIRST > CLOUD-FIRST
 
 This is **not** a full IRC RFC implementation. It is a small Go program with an IRC-like channel model over direct TCP/TLS.
 
-Current version **0.4.2**: TLS 1.3, signatures, LAN discovery, address candidates, a split node, parallel dial, persistent reconnect, and `/names`.
+Current version **0.4.3**: TLS 1.3, signatures, LAN discovery, address candidates, a split node, parallel dial, reconnect with backoff, and `/names`.
 
 ### Why serverless?
 
@@ -443,7 +444,7 @@ Auto-connect is **off** by default:
 ./p2pirc --nickname Alice --auto-connect
 ```
 
-Only **verified** announcements trigger a TCP/TLS dial. `/discover connect` is the one-shot version. `--reconnect` retries last-seen TCP addresses from `peers.json` every 5 seconds (overlapping passes are skipped).
+Only **verified** announcements trigger a TCP/TLS dial. `/discover connect` is the one-shot version. `--reconnect` looks at last-seen TCP addresses from `peers.json` every 5 seconds; failed peers back off exponentially (5s→60s). Overlapping passes are skipped.
 
 If multicast is blocked, `/connect` still works. Unsigned discovery packets are shown but never auto-connected.
 
@@ -457,7 +458,7 @@ STUN (on by default for the CLI) is a **UDP Binding** query: it reports the NAT-
 
 ### Security (honest)
 
-Version 0.4.2 provides:
+Version 0.4.3 provides:
 
 1. Link: **mutual TLS 1.3** with self-signed Ed25519 certificates (no CA)
 2. Messages: gossip frames carry an **Ed25519 signature**; `sender` must be `SHA-256(public key)`
@@ -512,7 +513,8 @@ Tests bind to `127.0.0.1` with ephemeral ports and temporary directories. They d
 | 0.3 | Signed discovery, auto-connect, local aliases |
 | 0.4 | Address candidates, STUN, optional UPnP, CI |
 | 0.4.1 | Connection/cache hardening, timestamp window, `/stats` |
-| 0.4.2 | Split node, parallel dial, persistent reconnect, `/names` (current) |
+| 0.4.2 | Split node, parallel dial, persistent reconnect, `/names` |
+| 0.4.3 | Reconnect backoff, dial gate, CI de-dupe (current) |
 | 0.5 | Optional relays / rendezvous for Internet-wide P2P |
 | 0.6 | Encrypted persistent history |
 | 0.7 | File transfer |

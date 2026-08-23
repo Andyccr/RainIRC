@@ -1,6 +1,6 @@
 # P2P-IRC architecture
 
-This document describes version **0.4.2**: a LAN-first, serverless peer-to-peer
+This document describes version **0.4.3**: a LAN-first, serverless peer-to-peer
 chat process. The node is split by concern (lifecycle, commands, gossip,
 dial, NAT). STUN is not a TCP NAT traversal. There is no central server.
 
@@ -17,7 +17,7 @@ Every running `p2pirc` binary is a **peer**. A peer has:
 - a bounded set of seen message IDs
 
 Nicknames are labels. They are never used as identity. A `/nick` change is
-gossiped as a signed `join` on each locally joined channel so other 0.4.2
+gossiped as a signed `join` on each locally joined channel so other 0.4.3
 peers update `Members` without a new wire type.
 
 ## Package layout
@@ -34,6 +34,7 @@ internal/chat       line parser + help text
 internal/discovery  LAN multicast
 internal/directory  local peers.json
 internal/limiter    per-sender sliding window (local policy)
+internal/backoff    per-peer reconnect delay (local policy)
 internal/transport  TLS 1.3 from the Ed25519 identity
 ```
 
@@ -212,6 +213,7 @@ and drops on overflow rather than stalling the network.
 | UPnP mapping failure | Debug log; continue without a public TCP mapping |
 | Malformed JSON after handshake | Skip line; disconnect after 5 consecutive |
 | Handshake slots / max peers full | Close the new socket |
+| Outbound dial already in flight | Skip; `/connect` reports already connecting |
 | Signed frame outside clock window | Drop, do not forward |
 | Per-sender gossip over local rate | Drop, do not forward |
 | Peer disconnect | Unregister, drop channel membership, print a system line |
@@ -236,13 +238,16 @@ Optional UDP multicast to `239.255.77.77:7776`. Version-2 announcements are
 Ed25519-signed (same identity as TLS). Unsigned packets are kept for display
 as `unverified` and are never used by `--auto-connect`.
 
-`--auto-connect` dials verified neighbors. `--reconnect` retries last-seen
-TCP addresses from `~/.p2pirc/peers.json` every 5 seconds. Overlapping
-passes are skipped so a slow dial does not pile up. `/alias` stores a
-**local** label for a Peer ID; `/connect laptop` resolves through that
-directory. Aliases never travel on the wire and never replace cryptographic
-identity. `/connect` to a saved peer tries `last_addr` then extra `addrs`
-in parallel (first successful handshake wins, at most 4 at once).
+`--auto-connect` dials verified neighbors (async, so the 10s ticker does
+not wait on TCP). `--reconnect` retries last-seen TCP addresses from
+`~/.p2pirc/peers.json` every 5 seconds. A failed dial backs off per Peer ID
+(5s, 10s, … cap 60s). Success or a clean disconnect resets that delay.
+Overlapping reconnect passes are skipped. The process also refuses a second
+in-flight TCP dial to the same `host:port` and caps outbound handshakes at 4.
+`/alias` stores a **local** label for a Peer ID; `/connect laptop` resolves
+through that directory. Aliases never travel on the wire and never replace
+cryptographic identity. `/connect` to a saved peer tries `last_addr` then
+extra `addrs` in parallel (first successful handshake wins, at most 4 at once).
 
 `hello`/`welcome` may include an unsigned `port` hint so an inbound peer
 can be reconnection-addressed (remote host + advertised listen port).

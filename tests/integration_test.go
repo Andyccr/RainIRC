@@ -353,7 +353,7 @@ func TestVersionCommand(t *testing.T) {
 	}
 	select {
 	case e := <-ev:
-		if !strings.Contains(e.Text, "0.4.2") {
+		if !strings.Contains(e.Text, "0.4.3") {
 			t.Fatalf("/version: %s", e.Text)
 		}
 	case <-time.After(2 * time.Second):

@@ -6,6 +6,26 @@ All notable changes to P2P-IRC are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/).
 Versions match `internal/version`.
 
+## [0.4.3] - 2026-08-23
+
+### Architecture / 架构
+
+- Per-peer reconnect backoff (5s → 60s) so a down neighbor is not redialed
+  every tick. Success or a clean disconnect resets the delay.
+  按节点指数退避重连（5 秒到 60 秒）；连上或正常断开后清零。
+- One in-flight dial per address and a process-wide cap of 4 outbound
+  handshakes. Auto-connect no longer blocks the 10s ticker.
+  同一地址不叠拨；出站握手最多 4 路并行。
+- CI runs on `main` and pull requests only (no duplicate branch-push jobs).
+  CI 只跑 `main` 与 PR，避免同一提交跑两次。
+
+### Fixed / 修复
+
+- Handshake comment said protocol v1; the wire is v2.
+  握手注释误写 v1，实际是协议 v2。
+- Reject negative `--max-peers`.
+  拒绝负数 `--max-peers`。
+
 ## [0.4.2] - 2026-08-23
 
 ### Architecture / 架构

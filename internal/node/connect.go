@@ -16,6 +16,8 @@ import (
 	"github.com/Andyccr/RainIRC/internal/peer"
 )
 
+var errAlreadyDialing = errors.New("already connecting")
+
 func reconnectAddr(info peer.Info) string {
 	if !info.Inbound {
 		return info.Addr
@@ -127,6 +129,12 @@ func (n *Node) dialFirst(addrs []string) error {
 		if errors.Is(r.err, context.Canceled) {
 			continue
 		}
+		if errors.Is(r.err, errAlreadyDialing) {
+			if last == nil {
+				last = r.err
+			}
+			continue
+		}
 		last = r.err
 		n.log.Debugf("dial: %v", r.err)
 	}
@@ -139,9 +147,50 @@ func (n *Node) dialFirst(addrs []string) error {
 	return last
 }
 
+func (n *Node) beginDial(address string) bool {
+	n.dialMu.Lock()
+	defer n.dialMu.Unlock()
+	if n.dialing == nil {
+		n.dialing = make(map[string]struct{})
+	}
+	if _, ok := n.dialing[address]; ok {
+		return false
+	}
+	n.dialing[address] = struct{}{}
+	return true
+}
+
+func (n *Node) endDial(address string) {
+	n.dialMu.Lock()
+	delete(n.dialing, address)
+	n.dialMu.Unlock()
+}
+
+func (n *Node) acquireDialSlot(ctx context.Context) error {
+	if n.dialSem == nil {
+		return nil
+	}
+	select {
+	case n.dialSem <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func (n *Node) dialOne(ctx context.Context, address string) error {
 	if ctx == nil {
 		ctx = n.ctx
+	}
+	if !n.beginDial(address) {
+		return fmt.Errorf("%w to %s", errAlreadyDialing, address)
+	}
+	defer n.endDial(address)
+	if err := n.acquireDialSlot(ctx); err != nil {
+		return err
+	}
+	if n.dialSem != nil {
+		defer func() { <-n.dialSem }()
 	}
 	d := net.Dialer{Timeout: n.cfg.DialTimeout}
 	conn, err := d.DialContext(ctx, "tcp", address)
@@ -182,9 +231,28 @@ func (n *Node) tryAutoConnect(a discovery.Announcement) {
 	if n.peers.Connected(a.PeerID) {
 		return
 	}
-	if err := n.Connect(a.Addr); err != nil {
-		n.log.Debugf("auto-connect %s: %v", shortID(a.PeerID), err)
+	if n.backoff != nil && !n.backoff.Allow(a.PeerID) {
 		return
+	}
+	go n.autoDial(a.PeerID, a.Addr)
+}
+
+func (n *Node) autoDial(peerID, addr string) {
+	if n.peers.Connected(peerID) {
+		return
+	}
+	if err := n.Connect(addr); err != nil {
+		if errors.Is(err, errAlreadyDialing) {
+			return
+		}
+		if n.backoff != nil {
+			n.backoff.Fail(peerID)
+		}
+		n.log.Debugf("auto-connect %s: %v", shortID(peerID), err)
+		return
+	}
+	if n.backoff != nil {
+		n.backoff.Reset(peerID)
 	}
 }
 
@@ -218,8 +286,21 @@ func (n *Node) reconnectOnce() {
 		if rec.PeerID == n.ident.PeerID || n.peers.Connected(rec.PeerID) {
 			continue
 		}
+		if n.backoff != nil && !n.backoff.Allow(rec.PeerID) {
+			continue
+		}
 		if err := n.Connect(rec.PeerID); err != nil {
+			if errors.Is(err, errAlreadyDialing) {
+				continue
+			}
+			if n.backoff != nil {
+				n.backoff.Fail(rec.PeerID)
+			}
 			n.log.Debugf("reconnect %s: %v", shortID(rec.PeerID), err)
+			continue
+		}
+		if n.backoff != nil {
+			n.backoff.Reset(rec.PeerID)
 		}
 	}
 }
