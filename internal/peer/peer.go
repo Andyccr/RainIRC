@@ -298,7 +298,7 @@ func (m *Manager) wrap(nc net.Conn, inbound bool) *Conn {
 	return c
 }
 
-// HandshakeAndAdopt performs the version-1 handshake then registers the peer.
+// HandshakeAndAdopt performs the version-2 handshake then registers the peer.
 // Duplicate-connection rule: keep the TCP session initiated by the
 // lexicographically smaller Peer ID. See docs/architecture.md.
 func (m *Manager) HandshakeAndAdopt(nc net.Conn, ident *identity.Identity, nick string, inbound bool, wait time.Duration) (*Conn, error) {

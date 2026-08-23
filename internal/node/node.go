@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Andyccr/RainIRC/internal/backoff"
 	"github.com/Andyccr/RainIRC/internal/channel"
 	"github.com/Andyccr/RainIRC/internal/chat"
 	"github.com/Andyccr/RainIRC/internal/config"
@@ -46,15 +47,16 @@ type Event struct {
 
 // Node is one P2P-IRC process: listener, peer table, gossip router, channels.
 type Node struct {
-	cfg    *config.Config
-	ident  *identity.Identity
-	log    *logger.Logger
-	peers  *peer.Manager
-	chans  *channel.Manager
-	router *router.Router
-	disc   *discovery.Service
-	dir    *directory.Directory
-	limit  *limiter.Window
+	cfg     *config.Config
+	ident   *identity.Identity
+	log     *logger.Logger
+	peers   *peer.Manager
+	chans   *channel.Manager
+	router  *router.Router
+	disc    *discovery.Service
+	dir     *directory.Directory
+	limit   *limiter.Window
+	backoff *backoff.Tracker
 
 	ln   net.Listener
 	port int
@@ -69,6 +71,9 @@ type Node struct {
 	upnpMap   *upnp.Mapping
 
 	handshakeSem chan struct{}
+	dialSem      chan struct{}
+	dialMu       sync.Mutex
+	dialing      map[string]struct{}
 	started      time.Time
 	reconnectMu  sync.Mutex
 
@@ -130,6 +135,9 @@ func Start(parent context.Context, cfg *config.Config, ident *identity.Identity,
 	}
 	n.dir = dir
 	n.limit = limiter.New(30, time.Second)
+	n.backoff = backoff.New(5*time.Second, time.Minute)
+	n.dialing = make(map[string]struct{})
+	n.dialSem = make(chan struct{}, 4)
 
 	addr := net.JoinHostPort(n.host, fmt.Sprintf("%d", cfg.Port))
 	ln, err := net.Listen("tcp", addr)

@@ -95,6 +95,9 @@ func Parse(args []string) (*Config, error) {
 	if cfg.Port < 0 || cfg.Port > 65535 {
 		return nil, fmt.Errorf("invalid port %d", cfg.Port)
 	}
+	if cfg.MaxPeers < 0 {
+		return nil, fmt.Errorf("invalid max-peers %d", cfg.MaxPeers)
+	}
 	if cfg.DataDir == "" {
 		dir, err := DefaultDataDir()
 		if err != nil {

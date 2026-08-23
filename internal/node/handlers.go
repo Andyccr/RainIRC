@@ -108,6 +108,9 @@ func (n *Node) onRouted(msg *protocol.Message, fromPeer string) {
 }
 
 func (n *Node) onPeerUp(info peer.Info) {
+	if n.backoff != nil {
+		n.backoff.Reset(info.ID)
+	}
 	n.observePeer(info)
 	n.System("connected to %s (%s)", info.ShortID(), n.displayName(info.ID, info.Nickname))
 	n.emit(Event{Kind: EventPeerUp, Text: info.ShortID(), Peer: info})
@@ -131,6 +134,9 @@ func (n *Node) resyncJoins(peerID string) {
 }
 
 func (n *Node) onPeerDown(info peer.Info) {
+	if n.backoff != nil {
+		n.backoff.Reset(info.ID)
+	}
 	n.chans.MemberLeaveAll(info.ID)
 	n.System("disconnected from %s (%s)", info.ShortID(), n.displayName(info.ID, info.Nickname))
 	n.emit(Event{Kind: EventPeerDown, Text: info.ShortID(), Peer: info})
