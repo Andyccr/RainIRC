@@ -1,6 +1,6 @@
 # Deploy P2P-IRC in one step
 
-This is version **0.5.0**. One static binary. No Docker, no database, no
+This is version **0.5.1**. One static binary. No Docker, no database, no
 central server. Relays are still not part of the program.
 
 本文说明如何一次装好、以后只敲 `p2pirc`。不要 Docker，不要中心服务器。
@@ -16,7 +16,7 @@ go install github.com/Andyccr/RainIRC/cmd/p2pirc@latest
 p2pirc --lan --nickname Alice
 ```
 
-没有 Go、或想装到 `~/.local/bin`：
+没有 Go、或想装到 `~/.local/bin`（脚本会先下 Release 并校验 SHA-256）：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Andyccr/RainIRC/main/scripts/install.sh | sh
@@ -79,7 +79,7 @@ go install github.com/Andyccr/RainIRC/cmd/p2pirc@latest
 p2pirc --lan --nickname Alice
 ```
 
-Without Go (installs to `~/.local/bin`):
+Without Go (installs to `~/.local/bin`; verifies the Release SHA-256):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Andyccr/RainIRC/main/scripts/install.sh | sh

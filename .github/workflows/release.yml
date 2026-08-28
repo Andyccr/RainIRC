@@ -15,9 +15,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.22.x"
+          cache: false
       - name: dist
         run: make dist VERSION=${GITHUB_REF_NAME#v} COMMIT=${GITHUB_SHA::7}
       - name: release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --generate-notes --title "$GITHUB_REF_NAME"
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes "p2pirc ${GITHUB_REF_NAME}: static binaries (linux/darwin/windows, amd64/arm64). See CHANGELOG.md. No Docker, no central server."

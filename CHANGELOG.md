@@ -6,6 +6,19 @@ All notable changes to P2P-IRC are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/).
 Versions match `internal/version`.
 
+## [0.5.1] - 2026-08-28
+
+### Deploy / 一次性部署
+
+- `scripts/install.sh` prefers the GitHub Release binary and checks SHA-256
+  before replacing `p2pirc`. `go install` is the fallback.
+  安装脚本优先下 Release 并校验校验和，失败再 `go install`。
+- Install is atomic (`p2pirc.new` then rename).
+  安装用临时文件再改名，避免写到一半。
+- CI disables the Go module cache (this module has no `go.sum`) and Release
+  notes stay short instead of dumping every historical PR.
+  CI 关掉无效的模块缓存；Release 说明不再罗列全部历史 PR。
+
 ## [0.5.0] - 2026-08-28
 
 ### Deploy / 一次性部署
