@@ -21,4 +21,7 @@ jobs:
       - name: release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes "p2pirc ${GITHUB_REF_NAME}: static binaries (linux/darwin/windows, amd64/arm64). See CHANGELOG.md. No Docker, no central server."
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "$GITHUB_REF_NAME" \
+            --notes "p2pirc ${GITHUB_REF_NAME} static binaries. See CHANGELOG.md."

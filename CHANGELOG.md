@@ -18,6 +18,9 @@ Versions match `internal/version`.
 - CI disables the Go module cache (this module has no `go.sum`) and Release
   notes stay short instead of dumping every historical PR.
   CI 关掉无效的模块缓存；Release 说明不再罗列全部历史 PR。
+- Quote the Release workflow `run` as a block so a colon in `--notes` cannot
+  break YAML parsing (Actions was creating empty failed runs).
+  Release 工作流的 `run` 改成块标量，避免 YAML 把说明里的冒号当成映射。
 
 ## [0.5.0] - 2026-08-28
 
