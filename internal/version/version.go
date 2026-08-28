@@ -1,16 +1,22 @@
 // Package version identifies this p2pirc build.
+// Version and Commit may be overwritten at link time:
+//
+//	-X github.com/Andyccr/RainIRC/internal/version.Version=0.5.0
+//	-X github.com/Andyccr/RainIRC/internal/version.Commit=<git sha>
 package version
 
-const (
-	Major = 0
-	Minor = 4
-	Patch = 3
-	Name  = "p2pirc"
-)
+const Name = "p2pirc"
 
 // Version is the semver string (major.minor.patch).
-const Version = "0.4.3"
+var Version = "0.5.0"
+
+// Commit is a short git SHA when built with make / the release workflow.
+var Commit = "dev"
 
 func String() string {
-	return Name + " " + Version
+	s := Name + " " + Version
+	if Commit != "" && Commit != "dev" {
+		s += " " + Commit
+	}
+	return s
 }

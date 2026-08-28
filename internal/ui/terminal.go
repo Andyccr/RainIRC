@@ -39,6 +39,13 @@ func (t *Terminal) Run(ctx context.Context) error {
 	if hint := n.LANHint(); hint != "" {
 		t.printf("LAN address: %s   (other peers: /connect %s)\n", hint, hint)
 	}
+	if n.AutoConnect() {
+		t.printf("LAN mesh: auto-connect verified neighbors")
+		if n.Reconnect() {
+			t.printf("; reconnect known peers")
+		}
+		t.printf(".\n")
+	}
 	t.printf("Type /help for commands. Chat is sent to the current channel.\n")
 	t.printf("------------------------------------------------\n")
 	t.printf("* joined #general\n")

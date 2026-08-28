@@ -1,0 +1,5 @@
+# Copy to ~/.p2pirc/config (mode 0600). CLI flags override this file.
+# 复制到 ~/.p2pirc/config。命令行优先。
+
+nickname=Alice
+lan=true

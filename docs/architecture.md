@@ -1,8 +1,8 @@
 # P2P-IRC architecture
 
-This document describes version **0.4.3**: a LAN-first, serverless peer-to-peer
-chat process. The node is split by concern (lifecycle, commands, gossip,
-dial, NAT). STUN is not a TCP NAT traversal. There is no central server.
+This document describes version **0.5.0**: a LAN-first, serverless peer-to-peer
+chat process. Deploy is one static binary (`docs/deploy.md`). STUN is not a
+TCP NAT traversal. There is no central server and no Docker.
 
 ## Peer model
 
@@ -17,7 +17,7 @@ Every running `p2pirc` binary is a **peer**. A peer has:
 - a bounded set of seen message IDs
 
 Nicknames are labels. They are never used as identity. A `/nick` change is
-gossiped as a signed `join` on each locally joined channel so other 0.4.3
+gossiped as a signed `join` on each locally joined channel so other 0.5
 peers update `Members` without a new wire type.
 
 ## Package layout
@@ -36,6 +36,7 @@ internal/directory  local peers.json
 internal/limiter    per-sender sliding window (local policy)
 internal/backoff    per-peer reconnect delay (local policy)
 internal/transport  TLS 1.3 from the Ed25519 identity
+internal/config     flags + optional ~/.p2pirc/config
 ```
 
 UI lines go `chat.Parse` → `commands` table → Node methods. Gossip frames
@@ -239,8 +240,9 @@ Ed25519-signed (same identity as TLS). Unsigned packets are kept for display
 as `unverified` and are never used by `--auto-connect`.
 
 `--auto-connect` dials verified neighbors (async, so the 10s ticker does
-not wait on TCP). `--reconnect` retries last-seen TCP addresses from
-`~/.p2pirc/peers.json` every 5 seconds. A failed dial backs off per Peer ID
+not wait on TCP). `--lan` turns on `--auto-connect` and `--reconnect` together.
+`--reconnect` retries last-seen TCP addresses from `~/.p2pirc/peers.json`
+every 5 seconds. A failed dial backs off per Peer ID
 (5s, 10s, … cap 60s). Success or a clean disconnect resets that delay.
 Overlapping reconnect passes are skipped. The process also refuses a second
 in-flight TCP dial to the same `host:port` and caps outbound handshakes at 4.
@@ -286,6 +288,7 @@ UPnP, when it works, maps the TCP listen port through the IGD. That address
 stop the node.
 
 `/connect alias` tries `last_addr` then saved extra `addrs` from
-`peers.json` in parallel. Full UDP hole punching still needs a rendezvous
-(roadmap 0.5). Relays are not in this version: adding a required helper
-node would give up the serverless property.
+`peers.json` in parallel. Full UDP hole punching still needs a rendezvous.
+Relays are not in this version: adding a required helper node would give up
+the serverless property. One-shot LAN deploy is `--lan` plus optional
+`~/.p2pirc/config` (see docs/deploy.md).

@@ -26,7 +26,7 @@ P2P > 中心服务器
 
 这**不是**完整 IRC RFC 实现。它只是一个小的 Go 程序：IRC 式频道 + 直连 TCP/TLS。
 
-当前版本 **0.4.3**：TLS 1.3、签名、局域网发现、地址候选、节点拆分、并行拨号、带退避的持续重连、`/names`。
+当前版本 **0.5.0**：一条命令安装、`--lan` 一键组网、`~/.p2pirc/config` 只配一次。仍是 TLS 1.3、签名、局域网 gossip；**没有**中继、**没有** Docker。
 
 ### 为什么要无服务器？
 
@@ -64,8 +64,7 @@ P2P-IRC 用 gossip 取代服务器：
 
 每个节点有 Ed25519 身份。Peer ID = `SHA-256(公钥)`，界面显示前 8 位十六进制（例如 `7f3a91c2`）。昵称只是cosmetic，不是身份。
 
-细节：[docs/architecture.md](docs/architecture.md)  
-协议：[docs/protocol.md](docs/protocol.md)
+细节：[docs/architecture.md](docs/architecture.md) · [docs/protocol.md](docs/protocol.md) · [docs/deploy.md](docs/deploy.md)
 
 ### 要求
 
@@ -73,17 +72,32 @@ P2P-IRC 用 gossip 取代服务器：
 - 终端
 - 节点之间的 TCP 连通（本版本针对局域网）
 
-不需要 Docker、数据库、Redis 或其它运行时。
+不需要 Docker、数据库、Redis 或其它运行时。一个静态二进制即可。
 
-### 安装
+### 安装（一次）
+
+有 Go 1.22+：
 
 ```bash
-git clone https://github.com/Andyccr/RainIRC.git
-cd RainIRC
-make build
-# or: go build -o p2pirc ./cmd/p2pirc
-./p2pirc --version
+go install github.com/Andyccr/RainIRC/cmd/p2pirc@latest
+p2pirc --version
 ```
+
+没有 Go：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Andyccr/RainIRC/main/scripts/install.sh | sh
+```
+
+从源码：`git clone` 后 `make install`（默认 `~/.local/bin`）。完整说明：[docs/deploy.md](docs/deploy.md)
+
+局域网一次启动：
+
+```bash
+p2pirc --lan --nickname Alice
+```
+
+`--lan` = `--auto-connect` + `--reconnect`。把 `lan=true` 写进 `~/.p2pirc/config` 之后，只需 `p2pirc`。
 
 ### 运行
 
@@ -101,6 +115,7 @@ make build
 | `--plain` | 关 | **关闭 TLS**（不安全，仅调试） |
 | `--auto-connect` | 关 | 自动连接**已验签**的局域网邻居 |
 | `--reconnect` | 关 | 每 5 秒重试 `peers.json` 里上次记下的 TCP 地址 |
+| `--lan` | 关 | 局域网预设：同时打开 auto-connect 与 reconnect |
 | `--stun` | `stun.l.google.com:19302` | STUN 服务器（UDP Binding；**不是** TCP 打洞） |
 | `--no-stun` | 关 | 不查询 STUN |
 | `--upnp` | 关 | 尝试 IGD 把 TCP 监听端口映射出去（常失败） |
@@ -110,6 +125,15 @@ make build
 身份存在 `~/.p2pirc/identity.json`（Windows 为 `%USERPROFILE%\.p2pirc\`），重启后复用。已知节点和别名在 `peers.json`。输入 `/whoami` 可查看完整 Peer ID、指纹和公钥。
 
 ### 两台机器互连
+
+同一 Wi-Fi，两边都：
+
+```bash
+p2pirc --lan --nickname Alice
+p2pirc --lan --nickname Bob
+```
+
+验签通过的发现包会自动拨号。组播不可用时再手动：
 
 机器 A（`192.168.1.10`）：
 
@@ -181,10 +205,10 @@ TCP 上先做 **TLS 1.3**（ALPN `p2pirc/2`），再跑换行分隔 JSON。握�
 
 节点会向 UDP 组播 `239.255.77.77:7776` 宣告自己，公告带 Ed25519 签名。`/discover` 会标明 `verified` / `unverified`。
 
-默认**不会**自动连接。打开自动连接：
+默认**不会**自动连接。一次打开局域网 mesh：
 
 ```bash
-./p2pirc --nickname Alice --auto-connect
+p2pirc --nickname Alice --lan
 ```
 
 只会对**验签通过**的邻居发起 TCP/TLS。`/discover connect` 是一次性手动版。`--reconnect` 每 5 秒查看 `peers.json` 里上次的 TCP 地址；失败的节点会指数退避（5s→60s），未完成的一轮不会叠跑。
@@ -197,11 +221,11 @@ TCP 上先做 **TLS 1.3**（ALPN `p2pirc/2`），再跑换行分隔 JSON。握�
 
 STUN（默认开启）只做 **UDP Binding**：它告诉你 NAT 看到的 UDP 源地址，**不等于** TCP `7777`，也不能让公网连上你的监听端口。测试请用 `--no-stun` 或空的 `--stun`，`go test` 不会访问公网。
 
-`--upnp` 会尝试在网关上映射 **TCP** 监听端口。很多网络没有 IGD 或禁止 UPnP；失败时节点照常运行。没有端口转发、UPnP 或以后的中继，公网入站仍然失败。完整 UDP 打洞需要会合点（0.5 中继）。
+`--upnp` 会尝试在网关上映射 **TCP** 监听端口。很多网络没有 IGD 或禁止 UPnP；失败时节点照常运行。没有端口转发或 UPnP 时，公网入站仍然失败。完整 UDP 打洞仍需要会合点（未实现；本版本不引入中继）。
 
 ### 安全（如实说明）
 
-0.4.3 提供：
+0.5.0 提供：
 
 1. 链路：**TLS 1.3 双向证书**（证书由本机 Ed25519 身份自签，无 CA）
 2. 消息：可 gossip 的帧带 **Ed25519 签名**，`sender` 必须等于 `SHA-256(公钥)`
@@ -214,7 +238,7 @@ STUN（默认开启）只做 **UDP Binding**：它告诉你 NAT 看到的 UDP �
 9. 连接数上限、畸形帧断开、签名时间窗
 10. 按发送者限制 gossip（本机每秒 30 帧，超限丢弃不转发）
 
-0.4.3 **仍然不是**：
+0.5.0 **仍然不是**：
 
 - 面向互联网的匿名聊天（没有 TCP 打洞；STUN 不是打洞）
 - 完美前向保密的 Noise 配置（TLS 1.3 有自己的握手；长期身份密钥也用于 TLS 证书）
@@ -257,8 +281,9 @@ go vet ./...
 | 0.4 | 地址候选、STUN、可选 UPnP、CI |
 | 0.4.1 | 连接/缓存加固、时间窗、/stats |
 | 0.4.2 | 节点拆分、并行拨号、持续重连、/names |
-| 0.4.3 | 重连退避、拨号互斥、CI 去重（当前） |
-| 0.5 | 可选中继 / 会合，跨互联网 P2P |
+| 0.4.3 | 重连退避、拨号互斥、CI 去重 |
+| 0.5.0 | 一次安装、`--lan`、本地 config、Release 二进制（当前） |
+| 以后 | 可选中继仍是明确的取舍，默认不做 |
 | 0.6 | 加密持久化历史 |
 | 0.7 | 文件传输 |
 | 0.8+ | 语音、移动端、稳定协议 |
@@ -283,7 +308,7 @@ LOCAL-FIRST > CLOUD-FIRST
 
 This is **not** a full IRC RFC implementation. It is a small Go program with an IRC-like channel model over direct TCP/TLS.
 
-Current version **0.4.3**: TLS 1.3, signatures, LAN discovery, address candidates, a split node, parallel dial, reconnect with backoff, and `/names`.
+Current version **0.5.0**: one-command install, `--lan` for a LAN mesh, and a once-written `~/.p2pirc/config`. Still TLS 1.3, signatures, and gossip. **No** relays, **no** Docker.
 
 ### Why serverless?
 
@@ -321,8 +346,7 @@ If the Internet is down, LAN chat still works.
 
 Each peer has an Ed25519 identity. The Peer ID is `SHA-256(public key)`, shown as the first 8 hex characters (for example `7f3a91c2`). Nicknames are cosmetic only.
 
-Details: [docs/architecture.md](docs/architecture.md)  
-Wire format: [docs/protocol.md](docs/protocol.md)
+Details: [docs/architecture.md](docs/architecture.md) · [docs/protocol.md](docs/protocol.md) · [docs/deploy.md](docs/deploy.md)
 
 ### Requirements
 
@@ -330,17 +354,32 @@ Wire format: [docs/protocol.md](docs/protocol.md)
 - A terminal
 - TCP connectivity between peers (LAN for this version)
 
-No Docker, database, Redis, or extra runtime.
+No Docker, database, Redis, or extra runtime. One static binary.
 
-### Installation
+### Installation (once)
+
+With Go 1.22+:
 
 ```bash
-git clone https://github.com/Andyccr/RainIRC.git
-cd RainIRC
-make build
-# or: go build -o p2pirc ./cmd/p2pirc
-./p2pirc --version
+go install github.com/Andyccr/RainIRC/cmd/p2pirc@latest
+p2pirc --version
 ```
+
+Without Go:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Andyccr/RainIRC/main/scripts/install.sh | sh
+```
+
+From source: `make install` (default `~/.local/bin`). Details: [docs/deploy.md](docs/deploy.md)
+
+LAN one-shot:
+
+```bash
+p2pirc --lan --nickname Alice
+```
+
+`--lan` is `--auto-connect` plus `--reconnect`. Put `lan=true` in `~/.p2pirc/config` and afterwards just run `p2pirc`.
 
 ### Running
 
@@ -358,6 +397,7 @@ make build
 | `--plain` | off | **Disable TLS** (insecure; debug only) |
 | `--auto-connect` | off | Automatically connect to **verified** LAN peers |
 | `--reconnect` | off | Retry last-known TCP addresses from `peers.json` every 5s |
+| `--lan` | off | LAN preset: `--auto-connect` and `--reconnect` |
 | `--stun` | `stun.l.google.com:19302` | STUN server (UDP Binding; **not** a TCP hole punch) |
 | `--no-stun` | off | Do not query STUN |
 | `--upnp` | off | Try IGD mapping of the TCP listen port (often fails) |
@@ -367,6 +407,15 @@ make build
 Identity is stored in `~/.p2pirc/identity.json` (or `%USERPROFILE%\.p2pirc\` on Windows) and reused across restarts. Known peers and aliases live in `peers.json`. `/whoami` prints the full Peer ID, fingerprint, and public key.
 
 ### Connecting two peers
+
+On the same Wi-Fi, both sides:
+
+```bash
+p2pirc --lan --nickname Alice
+p2pirc --lan --nickname Bob
+```
+
+Verified discovery packets trigger a dial. If multicast is blocked, connect by hand.
 
 Machine A (`192.168.1.10`):
 
@@ -438,10 +487,10 @@ See [docs/protocol.md](docs/protocol.md) for the full schema.
 
 Peers announce themselves on UDP multicast `239.255.77.77:7776` with an Ed25519 signature. `/discover` marks each neighbor `verified` or `unverified`.
 
-Auto-connect is **off** by default:
+Auto-connect is **off** by default. One flag for a LAN mesh:
 
 ```bash
-./p2pirc --nickname Alice --auto-connect
+p2pirc --nickname Alice --lan
 ```
 
 Only **verified** announcements trigger a TCP/TLS dial. `/discover connect` is the one-shot version. `--reconnect` looks at last-seen TCP addresses from `peers.json` every 5 seconds; failed peers back off exponentially (5s→60s). Overlapping passes are skipped.
@@ -454,11 +503,11 @@ After listen, the node collects LAN IPv4 listen addresses and puts them on unsig
 
 STUN (on by default for the CLI) is a **UDP Binding** query: it reports the NAT-facing UDP source address. That is **not** TCP port `7777` and does not make the listen port reachable from the Internet. Tests use an empty `--stun` / `--no-stun` so `go test` never needs the public network.
 
-`--upnp` tries to map the **TCP** listen port on an IGD. Many networks have no IGD or block UPnP; failure is ignored. Without a forwarded TCP port, UPnP, or a later relay, inbound from the public Internet still fails. Full UDP hole punching needs a rendezvous (0.5 relays).
+`--upnp` tries to map the **TCP** listen port on an IGD. Many networks have no IGD or block UPnP; failure is ignored. Without a forwarded TCP port or UPnP, inbound from the public Internet still fails. Full UDP hole punching needs a rendezvous (not in this version; relays stay out).
 
 ### Security (honest)
 
-Version 0.4.3 provides:
+Version 0.5.0 provides:
 
 1. Link: **mutual TLS 1.3** with self-signed Ed25519 certificates (no CA)
 2. Messages: gossip frames carry an **Ed25519 signature**; `sender` must be `SHA-256(public key)`
@@ -514,8 +563,9 @@ Tests bind to `127.0.0.1` with ephemeral ports and temporary directories. They d
 | 0.4 | Address candidates, STUN, optional UPnP, CI |
 | 0.4.1 | Connection/cache hardening, timestamp window, `/stats` |
 | 0.4.2 | Split node, parallel dial, persistent reconnect, `/names` |
-| 0.4.3 | Reconnect backoff, dial gate, CI de-dupe (current) |
-| 0.5 | Optional relays / rendezvous for Internet-wide P2P |
+| 0.4.3 | Reconnect backoff, dial gate, CI de-dupe |
+| 0.5.0 | One-shot install, `--lan`, local config, release binaries (current) |
+| later | Optional relays remain an explicit trade-off, not the default |
 | 0.6 | Encrypted persistent history |
 | 0.7 | File transfer |
 | 0.8+ | Voice, mobile, stable protocol |
