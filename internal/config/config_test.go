@@ -90,6 +90,20 @@ func TestParseCLIOverridesFile(t *testing.T) {
 	}
 }
 
+func TestParseConfigBoolWords(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte("debug=yes\nupnp=on\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Parse([]string{"--data-dir", dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Debug || !cfg.UPnP {
+		t.Fatalf("%+v", cfg)
+	}
+}
+
 func TestParseUnknownConfigKey(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, FileName), []byte("relay=true\n"), 0o600); err != nil {

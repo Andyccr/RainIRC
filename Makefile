@@ -1,5 +1,5 @@
 GO ?= go
-VERSION ?= 0.5.0
+VERSION ?= 0.5.1
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 LDFLAGS ?= -s -w -X github.com/Andyccr/RainIRC/internal/version.Version=$(VERSION) -X github.com/Andyccr/RainIRC/internal/version.Commit=$(COMMIT)
 PREFIX ?= $(HOME)/.local

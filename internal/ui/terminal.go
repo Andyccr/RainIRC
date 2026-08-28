@@ -36,6 +36,7 @@ func (t *Terminal) Run(ctx context.Context) error {
 	id := n.Ident()
 	t.printf("%s  peer=%s  nick=%s  port=%d  tls=%s\n", version.String(), id.ShortID(), n.Nick(), n.Port(), tlsLabel(n.TLS()))
 	t.printf("Listening on %s\n", n.ListenAddr())
+	t.printf("Data dir: %s\n", n.DataDir())
 	if hint := n.LANHint(); hint != "" {
 		t.printf("LAN address: %s   (other peers: /connect %s)\n", hint, hint)
 	}

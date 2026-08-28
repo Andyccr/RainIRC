@@ -26,7 +26,7 @@ P2P > 中心服务器
 
 这**不是**完整 IRC RFC 实现。它只是一个小的 Go 程序：IRC 式频道 + 直连 TCP/TLS。
 
-当前版本 **0.5.0**：一条命令安装、`--lan` 一键组网、`~/.p2pirc/config` 只配一次。仍是 TLS 1.3、签名、局域网 gossip；**没有**中继、**没有** Docker。
+当前版本 **0.5.1**：一条命令安装（Release 校验和）、`--lan` 一键组网、`~/.p2pirc/config` 只配一次。仍是 TLS 1.3、签名、局域网 gossip；**没有**中继、**没有** Docker。
 
 ### 为什么要无服务器？
 
@@ -225,7 +225,7 @@ STUN（默认开启）只做 **UDP Binding**：它告诉你 NAT 看到的 UDP �
 
 ### 安全（如实说明）
 
-0.5.0 提供：
+0.5.1 提供：
 
 1. 链路：**TLS 1.3 双向证书**（证书由本机 Ed25519 身份自签，无 CA）
 2. 消息：可 gossip 的帧带 **Ed25519 签名**，`sender` 必须等于 `SHA-256(公钥)`
@@ -238,7 +238,7 @@ STUN（默认开启）只做 **UDP Binding**：它告诉你 NAT 看到的 UDP �
 9. 连接数上限、畸形帧断开、签名时间窗
 10. 按发送者限制 gossip（本机每秒 30 帧，超限丢弃不转发）
 
-0.5.0 **仍然不是**：
+0.5.1 **仍然不是**：
 
 - 面向互联网的匿名聊天（没有 TCP 打洞；STUN 不是打洞）
 - 完美前向保密的 Noise 配置（TLS 1.3 有自己的握手；长期身份密钥也用于 TLS 证书）
@@ -282,7 +282,8 @@ go vet ./...
 | 0.4.1 | 连接/缓存加固、时间窗、/stats |
 | 0.4.2 | 节点拆分、并行拨号、持续重连、/names |
 | 0.4.3 | 重连退避、拨号互斥、CI 去重 |
-| 0.5.0 | 一次安装、`--lan`、本地 config、Release 二进制（当前） |
+| 0.5.0 | 一次安装、`--lan`、本地 config、Release 二进制 |
+| 0.5.1 | 安装校验和、原子替换、CI 缓存修正（当前） |
 | 以后 | 可选中继仍是明确的取舍，默认不做 |
 | 0.6 | 加密持久化历史 |
 | 0.7 | 文件传输 |
@@ -308,7 +309,7 @@ LOCAL-FIRST > CLOUD-FIRST
 
 This is **not** a full IRC RFC implementation. It is a small Go program with an IRC-like channel model over direct TCP/TLS.
 
-Current version **0.5.0**: one-command install, `--lan` for a LAN mesh, and a once-written `~/.p2pirc/config`. Still TLS 1.3, signatures, and gossip. **No** relays, **no** Docker.
+Current version **0.5.1**: one-command install (checksummed Release), `--lan` for a LAN mesh, and a once-written `~/.p2pirc/config`. Still TLS 1.3, signatures, and gossip. **No** relays, **no** Docker.
 
 ### Why serverless?
 
@@ -507,7 +508,7 @@ STUN (on by default for the CLI) is a **UDP Binding** query: it reports the NAT-
 
 ### Security (honest)
 
-Version 0.5.0 provides:
+Version 0.5.1 provides:
 
 1. Link: **mutual TLS 1.3** with self-signed Ed25519 certificates (no CA)
 2. Messages: gossip frames carry an **Ed25519 signature**; `sender` must be `SHA-256(public key)`
@@ -564,7 +565,8 @@ Tests bind to `127.0.0.1` with ephemeral ports and temporary directories. They d
 | 0.4.1 | Connection/cache hardening, timestamp window, `/stats` |
 | 0.4.2 | Split node, parallel dial, persistent reconnect, `/names` |
 | 0.4.3 | Reconnect backoff, dial gate, CI de-dupe |
-| 0.5.0 | One-shot install, `--lan`, local config, release binaries (current) |
+| 0.5.0 | One-shot install, `--lan`, local config, release binaries |
+| 0.5.1 | Checksummed install, atomic replace, CI cache fix (current) |
 | later | Optional relays remain an explicit trade-off, not the default |
 | 0.6 | Encrypted persistent history |
 | 0.7 | File transfer |

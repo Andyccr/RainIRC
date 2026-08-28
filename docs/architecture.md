@@ -1,6 +1,6 @@
 # P2P-IRC architecture
 
-This document describes version **0.5.0**: a LAN-first, serverless peer-to-peer
+This document describes version **0.5.1**: a LAN-first, serverless peer-to-peer
 chat process. Deploy is one static binary (`docs/deploy.md`). STUN is not a
 TCP NAT traversal. There is no central server and no Docker.
 

@@ -75,6 +75,15 @@ func applyFile(cfg *Config, path string, set map[string]bool) error {
 	return sc.Err()
 }
 
+func applyBool(dst *bool, value string) error {
+	b, err := parseBool(value)
+	if err != nil {
+		return err
+	}
+	*dst = b
+	return nil
+}
+
 func applyKey(cfg *Config, key, value string) error {
 	switch key {
 	case "port":
@@ -86,55 +95,23 @@ func applyKey(cfg *Config, key, value string) error {
 	case "nickname":
 		cfg.Nickname = value
 	case "debug":
-		b, err := parseBool(value)
-		if err != nil {
-			return err
-		}
-		cfg.Debug = b
+		return applyBool(&cfg.Debug, value)
 	case "no-discover":
-		b, err := parseBool(value)
-		if err != nil {
-			return err
-		}
-		cfg.NoDiscover = b
+		return applyBool(&cfg.NoDiscover, value)
 	case "plain":
-		b, err := parseBool(value)
-		if err != nil {
-			return err
-		}
-		cfg.Plain = b
+		return applyBool(&cfg.Plain, value)
 	case "auto-connect":
-		b, err := parseBool(value)
-		if err != nil {
-			return err
-		}
-		cfg.AutoConnect = b
+		return applyBool(&cfg.AutoConnect, value)
 	case "reconnect":
-		b, err := parseBool(value)
-		if err != nil {
-			return err
-		}
-		cfg.Reconnect = b
+		return applyBool(&cfg.Reconnect, value)
 	case "lan":
-		b, err := parseBool(value)
-		if err != nil {
-			return err
-		}
-		cfg.Lan = b
+		return applyBool(&cfg.Lan, value)
 	case "stun":
 		cfg.STUNServer = value
 	case "no-stun":
-		b, err := parseBool(value)
-		if err != nil {
-			return err
-		}
-		cfg.NoSTUN = b
+		return applyBool(&cfg.NoSTUN, value)
 	case "upnp":
-		b, err := parseBool(value)
-		if err != nil {
-			return err
-		}
-		cfg.UPnP = b
+		return applyBool(&cfg.UPnP, value)
 	case "max-peers":
 		n, err := strconv.Atoi(value)
 		if err != nil {
