@@ -204,7 +204,13 @@ func (n *Node) PeerCount() int             { return n.peers.Len() }
 func (n *Node) Channels() *channel.Manager { return n.chans }
 func (n *Node) Peers() []peer.Info         { return n.peers.List() }
 func (n *Node) TLS() bool                  { return n.peers.TLS() }
-func (n *Node) DataDir() string            { return n.cfg.DataDir }
+func (n *Node) AutoConnect() bool {
+	return n.cfg != nil && n.cfg.AutoConnect
+}
+func (n *Node) Reconnect() bool {
+	return n.cfg != nil && n.cfg.Reconnect
+}
+func (n *Node) DataDir() string { return n.cfg.DataDir }
 func (n *Node) ListenAddr() string {
 	return net.JoinHostPort(n.host, fmt.Sprintf("%d", n.port))
 }

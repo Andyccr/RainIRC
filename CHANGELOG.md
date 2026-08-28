@@ -6,6 +6,31 @@ All notable changes to P2P-IRC are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/).
 Versions match `internal/version`.
 
+## [0.5.0] - 2026-08-28
+
+### Deploy / 一次性部署
+
+- `go install github.com/Andyccr/RainIRC/cmd/p2pirc@latest` and
+  `scripts/install.sh` (default `~/.local/bin`, no root, no Docker).
+  一条命令安装；默认装到 `~/.local/bin`。
+- `make install` / `make dist` (linux/darwin/windows amd64+arm64) and a
+  GitHub Release workflow on `v*` tags.
+  交叉编译与打标签发 Release。
+- `--lan` turns on auto-connect + reconnect for a LAN mesh in one flag.
+  `--lan` 一键打开局域网自动连接与重连。
+- Optional `~/.p2pirc/config` (CLI wins). Write once, then run `p2pirc`.
+  可选本地配置文件，命令行优先。
+- Optional systemd user unit in `contrib/p2pirc.service`.
+  可选 systemd 用户服务。
+
+### Architecture / 架构
+
+- Version and commit can be set at link time (`-X ...Version=`).
+  版本号可用 ldflags 写入。
+- Relays are still not in the tree. 0.5.0 is deploy convenience, not a
+  rendezvous network.
+  0.5.0 不做中继，只把部署变简单。
+
 ## [0.4.3] - 2026-08-23
 
 ### Architecture / 架构

@@ -1,0 +1,14 @@
+[Unit]
+Description=P2P-IRC LAN peer (no central server)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/p2pirc
+Restart=on-failure
+RestartSec=3
+WorkingDirectory=%h
+
+[Install]
+WantedBy=default.target

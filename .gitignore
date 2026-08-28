@@ -8,6 +8,9 @@
 # Local identity / data (never commit keys)
 .p2pirc/
 
+# Cross-compiled release binaries
+/dist/
+
 # Editor / OS
 .idea/
 .vscode/

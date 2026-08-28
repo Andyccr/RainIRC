@@ -1,4 +1,5 @@
-// Package config holds process-level settings parsed from flags and defaults.
+// Package config holds process-level settings parsed from flags, an optional
+// ~/.p2pirc/config file, and defaults. CLI flags win over the file.
 package config
 
 import (
@@ -36,6 +37,7 @@ type Config struct {
 	Plain       bool // disable TLS (insecure)
 	AutoConnect bool // connect to verified LAN discoveries
 	Reconnect   bool // keep retrying last-known peer addresses from peers.json
+	Lan         bool // preset: AutoConnect + Reconnect
 	STUNServer  string
 	NoSTUN      bool
 	UPnP        bool
@@ -70,11 +72,17 @@ func Default() *Config {
 	}
 }
 
-// Parse reads command-line flags. args should typically be os.Args[1:].
+// Parse reads command-line flags, then optional <data-dir>/config.
+// args should typically be os.Args[1:]. CLI flags override the file.
 func Parse(args []string) (*Config, error) {
 	cfg := Default()
 	fs := flag.NewFlagSet("p2pirc", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	fs.Usage = func() {
+		fmt.Fprintf(fs.Output(), "Usage: p2pirc [flags]\n\n")
+		fs.PrintDefaults()
+		fmt.Fprintf(fs.Output(), "\nOptional file ~/.p2pirc/config (CLI flags override). See docs/deploy.md.\n")
+	}
 	fs.IntVar(&cfg.Port, "port", DefaultPort, "TCP listen port (0 = ephemeral)")
 	fs.StringVar(&cfg.Nickname, "nickname", "", "cosmetic nickname (default: first 8 chars of peer ID)")
 	fs.StringVar(&cfg.DataDir, "data-dir", "", "directory for identity (default: ~/.p2pirc)")
@@ -83,6 +91,7 @@ func Parse(args []string) (*Config, error) {
 	fs.BoolVar(&cfg.Plain, "plain", false, "disable TLS (insecure; debug only)")
 	fs.BoolVar(&cfg.AutoConnect, "auto-connect", false, "automatically connect to verified LAN peers")
 	fs.BoolVar(&cfg.Reconnect, "reconnect", false, "keep retrying last-known peer addresses from peers.json every 5s")
+	fs.BoolVar(&cfg.Lan, "lan", false, "LAN preset: --auto-connect and --reconnect (one-shot mesh)")
 	fs.StringVar(&cfg.STUNServer, "stun", "stun.l.google.com:19302", "STUN server host:port (UDP Binding; not a TCP hole punch)")
 	fs.BoolVar(&cfg.NoSTUN, "no-stun", false, "do not query STUN")
 	fs.BoolVar(&cfg.UPnP, "upnp", false, "try IGD AddPortMapping for the TCP listen port (opt-in)")
@@ -92,18 +101,29 @@ func Parse(args []string) (*Config, error) {
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
-	if cfg.Port < 0 || cfg.Port > 65535 {
-		return nil, fmt.Errorf("invalid port %d", cfg.Port)
-	}
-	if cfg.MaxPeers < 0 {
-		return nil, fmt.Errorf("invalid max-peers %d", cfg.MaxPeers)
-	}
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+
 	if cfg.DataDir == "" {
 		dir, err := DefaultDataDir()
 		if err != nil {
 			return nil, err
 		}
 		cfg.DataDir = dir
+	}
+
+	if !cfg.ShowVersion {
+		if err := applyFile(cfg, FilePath(cfg.DataDir), set); err != nil {
+			return nil, err
+		}
+	}
+	applyLan(cfg)
+
+	if cfg.Port < 0 || cfg.Port > 65535 {
+		return nil, fmt.Errorf("invalid port %d", cfg.Port)
+	}
+	if cfg.MaxPeers < 0 {
+		return nil, fmt.Errorf("invalid max-peers %d", cfg.MaxPeers)
 	}
 	return cfg, nil
 }
